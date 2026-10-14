@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">ATV Bridge</string>
     <string name="channel_media">Media controls</string>
-    <string name="channel_status">Connection status</string>
+    <string name="channel_status">Background connection (hidden)</string>
     <string name="channel_keyboard">Text input on the Apple TV</string>
     <string name="keyboard_title">%1$s is waiting for text</string>
     <string name="keyboard_body">Tap to type with the remote.</string>
@@ -31,7 +31,6 @@
     <string name="volume_keys">Phone volume buttons control the Apple TV</string>
     <string name="start_on_boot">Start automatically after reboot</string>
     <string name="licenses">Open-source licenses</string>
-    <string name="hide_status">Hide the connection notification</string>
     <string name="battery">Allow running in the background</string>
     <string name="help">The Apple TV\'s now-playing card appears on your lock screen and in Quick Settings while something is playing. For the D-pad and keyboard, use the Google TV remote (Quick Settings tile or Google Home app) and pick your Apple TV; the pairing code is shown on the bridge dashboard.</string>
 </resources>

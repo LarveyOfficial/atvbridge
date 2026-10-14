@@ -457,8 +457,13 @@ class BridgeService : Service(), BridgeClient.Listener {
         private const val KEYBOARD_NOTIFICATION_ID = 2
         private const val CHANNEL_KEYBOARD = "keyboard"
         private const val CHANNEL_MEDIA = "media"
-        /** The ongoing connection notification's channel (users can turn it off). */
-        const val CHANNEL_STATUS = "status"
+        /**
+         * The foreground service's notification while nothing is playing. Android requires one to
+         * stay connected in the background; this channel's importance is NONE, so it never shows.
+         * (Replaces the old visible "status" channel.)
+         */
+        private const val CHANNEL_STATUS = "connection"
+        private const val OLD_CHANNEL_STATUS = "status"
         private const val ACTION_STOP = "com.larvey.atvbridge.STOP"
         private const val ACTION_COMMAND = "com.larvey.atvbridge.COMMAND"
         private const val ACTION_RECONNECT = "com.larvey.atvbridge.RECONNECT"
@@ -478,14 +483,15 @@ class BridgeService : Service(), BridgeClient.Listener {
 
         val isRunning get() = status != null
 
-        fun createChannels(context: Context) {
+        private fun createChannels(context: Context) {
             val notifications = context.getSystemService(NotificationManager::class.java)
             notifications.createNotificationChannel(
                 NotificationChannel(CHANNEL_MEDIA, context.getString(R.string.channel_media), NotificationManager.IMPORTANCE_LOW)
                     .apply { setShowBadge(false) },
             )
+            runCatching { notifications.deleteNotificationChannel(OLD_CHANNEL_STATUS) }
             notifications.createNotificationChannel(
-                NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_MIN)
+                NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_NONE)
                     .apply { setShowBadge(false) },
             )
             notifications.createNotificationChannel(
