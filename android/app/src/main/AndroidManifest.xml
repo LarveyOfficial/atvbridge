@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -34,6 +35,18 @@
             android:name=".BridgeService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- Publishes the Apple TV as a media route (Android 11+), so the media card shows it
+             as the playback device instead of "This device". The system binds it; there is no
+             public permission to require (BIND_MEDIA_ROUTE_SERVICE is hidden). -->
+        <service
+            android:name=".RouteProviderService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="android.media.MediaRoute2ProviderService" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".BootReceiver"

@@ -12,11 +12,15 @@ import android.graphics.Bitmap
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.MediaMetadata
+import android.media.MediaRoute2Info
+import android.media.MediaRouter2
+import android.media.RouteDiscoveryPreference
 import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -39,6 +43,8 @@ class BridgeService : Service(), BridgeClient.Listener {
     private var artworkId: String? = null
     private var artwork: Bitmap? = null
     private var volumeProvider: VolumeProvider? = null
+    private var router: Any? = null  // MediaRouter2 (API 30+)
+    private var routeCallback: Any? = null
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -76,6 +82,57 @@ class BridgeService : Service(), BridgeClient.Listener {
         }
         connect(url)
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+        RouteProviderService.onVolumeSteps = { steps ->
+            repeat(minOf(kotlin.math.abs(steps), 5)) { command(if (steps > 0) "volume_up" else "volume_down") }
+        }
+        if (Build.VERSION.SDK_INT >= 30) startRouting()
+    }
+
+    // --- media route (shows the Apple TV as the playback device) ---------------------------
+
+    @android.annotation.TargetApi(30)
+    private fun startRouting() {
+        val r = MediaRouter2.getInstance(this)
+        val callback = object : MediaRouter2.RouteCallback() {
+            @Deprecated("Deprecated in API 34")
+            override fun onRoutesAdded(routes: List<MediaRoute2Info>) = transferToAppleTv()
+
+            @Deprecated("Deprecated in API 34")
+            override fun onRoutesChanged(routes: List<MediaRoute2Info>) = transferToAppleTv()
+        }
+        r.registerRouteCallback(
+            mainExecutor, callback,
+            RouteDiscoveryPreference.Builder(listOf(RouteProviderService.FEATURE), true).build(),
+        )
+        r.registerTransferCallback(mainExecutor, object : MediaRouter2.TransferCallback() {
+            override fun onTransfer(oldController: MediaRouter2.RoutingController, newController: MediaRouter2.RoutingController) {
+                Log.i(TAG, "Media routed to ${newController.selectedRoutes.map { it.name }}")
+            }
+
+            override fun onTransferFailure(requestedRoute: MediaRoute2Info) {
+                Log.w(TAG, "Routing to ${requestedRoute.name} failed")
+            }
+        })
+        router = r
+        routeCallback = callback
+        transferToAppleTv()
+    }
+
+    @android.annotation.TargetApi(30)
+    private fun transferToAppleTv() {
+        val r = router as? MediaRouter2 ?: return
+        val route = r.routes.firstOrNull { RouteProviderService.FEATURE in it.features } ?: return
+        val routed = r.controllers.any { c -> !c.isReleased && c.selectedRoutes.any { it.id == route.id } }
+        if (!routed) r.transferTo(route)
+    }
+
+    @android.annotation.TargetApi(30)
+    private fun stopRouting() {
+        val r = router as? MediaRouter2 ?: return
+        r.controllers.filter { it != r.systemController }.forEach { it.release() }
+        (routeCallback as? MediaRouter2.RouteCallback)?.let { r.unregisterRouteCallback(it) }
+        router = null
+        routeCallback = null
     }
 
     private fun connect(url: String) {
@@ -101,6 +158,8 @@ class BridgeService : Service(), BridgeClient.Listener {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 30) stopRouting()
+        RouteProviderService.onVolumeSteps = null
         client?.close()
         client = null
         runCatching {
@@ -121,6 +180,7 @@ class BridgeService : Service(), BridgeClient.Listener {
 
     override fun onState(state: BridgeState) {
         this.state = state
+        if (Build.VERSION.SDK_INT >= 30) RouteProviderService.setDeviceName(state.name)
         val id = state.nowPlaying?.artworkId
         if (id != artworkId) {
             artworkId = id
@@ -203,42 +263,51 @@ class BridgeService : Service(), BridgeClient.Listener {
     }
 
     private fun updateVolume(st: BridgeState) {
-        // Apple TVs driving the TV over HDMI-CEC/IR can only step up/down (no level),
-        // so that case gets a relative provider; the shown level is a placeholder.
+        // Always a remote session, so Android attributes playback to the Apple TV. Apple TVs
+        // driving the TV over HDMI-CEC/IR can only step volume (relative); the level shown is
+        // a placeholder. With volume keys turned off the volume is fixed.
         val mode = when {
-            !prefs.volumeKeys -> null
+            !prefs.volumeKeys -> VolumeProvider.VOLUME_CONTROL_FIXED
             st.volumeControl == "absolute" && st.volume != null -> VolumeProvider.VOLUME_CONTROL_ABSOLUTE
             st.volumeControl == "relative" || st.volumeControl == "absolute" -> VolumeProvider.VOLUME_CONTROL_RELATIVE
-            else -> null
-        }
-        if (mode == null) {
-            if (volumeProvider != null) {
-                volumeProvider = null
-                session.setPlaybackToLocal(
-                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build(),
-                )
-            }
-            return
+            else -> VolumeProvider.VOLUME_CONTROL_FIXED
         }
         val provider = volumeProvider?.takeIf { it.volumeControl == mode }
-            ?: object : VolumeProvider(mode, 100, st.volume ?: 50) {
-                override fun onSetVolumeTo(volume: Int) {
-                    currentVolume = volume.coerceIn(0, 100)
-                    command("set_volume", "level" to currentVolume)
-                }
-
-                override fun onAdjustVolume(direction: Int) {
-                    when (direction) {
-                        1 -> command("volume_up")
-                        -1 -> command("volume_down")
-                    }
-                }
-            }.also {
+            ?: newVolumeProvider(mode, st.volume ?: 50).also {
                 volumeProvider = it
                 session.setPlaybackToRemote(it)
             }
         if (mode == VolumeProvider.VOLUME_CONTROL_ABSOLUTE && st.volume != null && provider.currentVolume != st.volume) {
             provider.currentVolume = st.volume
+        }
+    }
+
+    private fun newVolumeProvider(mode: Int, current: Int): VolumeProvider {
+        val callbacks = object {
+            fun set(provider: VolumeProvider, volume: Int) {
+                provider.currentVolume = volume.coerceIn(0, 100)
+                command("set_volume", "level" to provider.currentVolume)
+            }
+
+            fun adjust(direction: Int) {
+                when (direction) {
+                    1 -> command("volume_up")
+                    -1 -> command("volume_down")
+                    101 -> command("mute")  // AudioManager.ADJUST_TOGGLE_MUTE
+                }
+            }
+        }
+        // The id ties this session to RouteProviderService's routing session (Android 11+).
+        return if (Build.VERSION.SDK_INT >= 30) {
+            object : VolumeProvider(mode, 100, current, RouteProviderService.SESSION_ID) {
+                override fun onSetVolumeTo(volume: Int) = callbacks.set(this, volume)
+                override fun onAdjustVolume(direction: Int) = callbacks.adjust(direction)
+            }
+        } else {
+            object : VolumeProvider(mode, 100, current) {
+                override fun onSetVolumeTo(volume: Int) = callbacks.set(this, volume)
+                override fun onAdjustVolume(direction: Int) = callbacks.adjust(direction)
+            }
         }
     }
 
