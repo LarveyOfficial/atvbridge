@@ -216,9 +216,9 @@ class GoogleTVServer:
         for s in list(self.sessions):
             s.push_state()
 
-    def _on_keyboard(self, focused: bool) -> None:
+    def _on_keyboard(self, focused: bool, text: str | None) -> None:
         for s in list(self.sessions):
-            s.push_keyboard(focused)
+            s.push_keyboard(focused, text or "")
 
 
 class PairingSession(TLSConnection):
@@ -469,6 +469,7 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_ime_batch_edit"):
             edits = msg.remote_ime_batch_edit.edit_info
             if edits:
+                # The phone sends the whole field contents after each edit.
                 self._run("text_set", text=edits[-1].text_field_status.value)
         else:
             LOG.debug("Unhandled remote message: %s", msg)
@@ -653,19 +654,48 @@ class RemoteSession(TLSConnection):
             self._run("volume_up" if steps > 0 else "volume_down")
         self._push_volume()
 
-    def push_keyboard(self, focused: bool) -> None:
-        if not self.active or not focused:
+    def push_keyboard(self, focused: bool, text: str = "") -> None:
+        """Tell the phone a text field gained/lost focus, like a Google TV does when its
+        on-screen keyboard opens, so the phone offers to type."""
+        if not self.active:
+            return
+        app = (self.server.appletv.state.get("app") or {}).get("id") or ""
+        if not focused:
+            msg = RemoteMessage()
+            msg.remote_ime_key_inject.app_info.app_package = app
+            self.send(msg)
             return
         self._ime_counter += 1
         self._field_counter += 1
+        cursor = len(text)
+        # 1. IME state for the focused app + field (current text and cursor).
+        msg = RemoteMessage()
+        inject = msg.remote_ime_key_inject
+        inject.app_info.counter = self._ime_counter
+        inject.app_info.app_package = app
+        field = inject.text_field_status
+        field.counter_field = self._field_counter
+        field.value = text
+        field.start = field.end = cursor
+        self.send(msg)
+        # 2. Edit counters the phone must echo in its remote_ime_batch_edit.
+        msg = RemoteMessage()
+        batch = msg.remote_ime_batch_edit
+        batch.ime_counter = self._ime_counter
+        batch.field_counter = self._field_counter
+        edit = batch.edit_info.add()
+        edit.insert = 1
+        edit.text_field_status.value = text
+        edit.text_field_status.start = edit.text_field_status.end = cursor
+        self.send(msg)
+        # 3. Ask the phone to show its keyboard.
         msg = RemoteMessage()
         status = msg.remote_ime_show_request.remote_text_field_status
         status.counter_field = self._field_counter
-        status.value = ""
-        status.start = 0
-        status.end = 0
+        status.value = text
+        status.start = status.end = cursor
         self.send(msg)
-
+        LOG.info("Asked %s to show its keyboard (field text %r)", self.peer_ip, text)
 
 def host_ip() -> str:
     """LAN IP to advertise. Override with ATVB_HOST_IP if detection is wrong."""

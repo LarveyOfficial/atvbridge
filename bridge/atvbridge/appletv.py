@@ -38,7 +38,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self.artwork: tuple[bytes, str] | None = None
         self._artwork_id: str | None = None
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
-        self._keyboard_listeners: list[Callable[[bool], None]] = []
+        # cb(focused, current text of the focused field or None)
+        self._keyboard_listeners: list[Callable[[bool, str | None], None]] = []
         self._task: asyncio.Task | None = None
         self._lost = asyncio.Event()
         self.keyboard_focused = False
@@ -160,14 +161,27 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         focused = new_state == KeyboardFocusState.Focused
         self.keyboard_focused = focused
         self._focus_changed.set()
+        LOG.info("Apple TV keyboard %s", "focused" if focused else "unfocused")
+        self.loop.create_task(self._notify_keyboard(focused))
+
+    async def _notify_keyboard(self, focused: bool) -> None:
+        text = None
+        if focused and self.atv:
+            try:
+                text = await self.atv.keyboard.text_get()
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug("text_get failed: %s", exc)
         for cb in list(self._keyboard_listeners):
-            cb(focused)
+            try:
+                cb(focused, text)
+            except Exception:  # noqa: BLE001
+                LOG.exception("keyboard listener failed")
 
     # --- state -------------------------------------------------------------------
     def on_change(self, cb: Callable[[dict[str, Any]], None]) -> None:
         self._listeners.append(cb)
 
-    def on_keyboard(self, cb: Callable[[bool], None]) -> None:
+    def on_keyboard(self, cb: Callable[[bool, str | None], None]) -> None:
         self._keyboard_listeners.append(cb)
 
     def _set(self, **kwargs: Any) -> None:

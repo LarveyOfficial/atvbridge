@@ -45,6 +45,10 @@ class FakeAppleTV:
         for cb in self._listeners:
             cb(self.state)
 
+    def keyboard(self, focused: bool, text: str | None = None) -> None:
+        for cb in self._keyboard_listeners:
+            cb(focused, text)
+
     async def command(self, name: str, **kwargs: Any) -> None:
         self.commands.append((name, kwargs))
         self.got_command.set()
@@ -278,6 +282,19 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         session.on_data(ProtobufFraming.encode(end.SerializeToString()))
         await wait_for(lambda: heard)
         self.assertEqual(heard[0], (audio, 16000))
+
+    async def test_keyboard_focus_prompts_phone_and_typing_sets_text(self) -> None:
+        await self.connected_remote()
+        proto = self.remote._remote_message_protocol
+        self.atv.keyboard(True, "stra")
+        # The phone learns the edit counters and the field's current text from the TV.
+        await wait_for(lambda: proto.ime_counter == 1 and proto.ime_field_counter == 1)
+        self.remote.send_text("stranger things")
+        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger things"}))
+        # Next focus gets fresh counters.
+        self.atv.keyboard(False)
+        self.atv.keyboard(True, "")
+        await wait_for(lambda: proto.ime_counter == 2)
 
     async def test_options_offer_output_encoding(self) -> None:
         # Google's remote app (Polo) needs our *output* encodings to match its input
