@@ -43,6 +43,8 @@ class BridgeService : Service(), BridgeClient.Listener {
     private var artworkId: String? = null
     private var artwork: Bitmap? = null
     private var volumeProvider: VolumeProvider? = null
+    /** Text shown in the keyboard notification, or null when it isn't shown. */
+    private var keyboardShown: String? = null
     private var router: Any? = null  // MediaRouter2 (API 30+)
     private var routeCallback: Any? = null
 
@@ -165,6 +167,7 @@ class BridgeService : Service(), BridgeClient.Listener {
             getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
         }
         session.release()
+        notifications.cancel(KEYBOARD_NOTIFICATION_ID)
         publish(null)
         super.onDestroy()
     }
@@ -175,11 +178,13 @@ class BridgeService : Service(), BridgeClient.Listener {
         bridgeConnected = connected
         if (!connected) state = null
         update()
+        updateKeyboardNotification()
     }
 
     override fun onState(state: BridgeState) {
         this.state = state
         if (Build.VERSION.SDK_INT >= 30) RouteProviderService.setDeviceName(state.name)
+        updateKeyboardNotification()
         val id = state.nowPlaying?.artworkId
         if (id != artworkId) {
             artworkId = id
@@ -349,6 +354,13 @@ class BridgeService : Service(), BridgeClient.Listener {
             NotificationChannel(CHANNEL_STATUS, getString(R.string.channel_status), NotificationManager.IMPORTANCE_MIN)
                 .apply { setShowBadge(false) },
         )
+        notifications.createNotificationChannel(
+            NotificationChannel(CHANNEL_KEYBOARD, getString(R.string.channel_keyboard), NotificationManager.IMPORTANCE_HIGH)
+                .apply {
+                    setShowBadge(false)
+                    setSound(null, null)
+                },
+        )
     }
 
     private fun statusNotification(text: String): Notification =
@@ -368,6 +380,44 @@ class BridgeService : Service(), BridgeClient.Listener {
                 ).build(),
             )
             .build()
+
+    /** Shown while the Apple TV waits for text; tapping opens the Google TV remote to type. */
+    private fun updateKeyboardNotification() {
+        val st = state
+        if (!bridgeConnected || st == null || !st.atvConnected || !st.keyboardFocused) {
+            if (keyboardShown != null) {
+                notifications.cancel(KEYBOARD_NOTIFICATION_ID)
+                keyboardShown = null
+            }
+            return
+        }
+        val text = st.keyboardText.orEmpty()
+        if (keyboardShown == text) return
+        keyboardShown = text
+        val body = if (text.isEmpty()) getString(R.string.keyboard_body) else getString(R.string.keyboard_body_text, text)
+        val notification = Notification.Builder(this, CHANNEL_KEYBOARD)
+            .setSmallIcon(R.drawable.ic_keyboard)
+            .setContentTitle(getString(R.string.keyboard_title, st.name))
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setContentIntent(tapIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            // Live Update (status bar chip) on Android 16+: Android 16 reads the
+            // "requestPromotedOngoing" extra, newer releases a colorized request. Set via extras
+            // since this app compiles against API 35.
+            .setColorized(true)
+            .setColor(getColor(R.color.accent))
+            .addExtras(Bundle().apply {
+                putBoolean("android.requestPromotedOngoing", true)
+                putString("android.shortCriticalText", getString(R.string.keyboard_chip))
+            })
+            .build()
+        notifications.notify(KEYBOARD_NOTIFICATION_ID, notification)
+    }
 
     private fun mediaNotification(title: String, subtitle: String, playing: Boolean): Notification {
         val builder = Notification.Builder(this, CHANNEL_MEDIA)
@@ -438,6 +488,8 @@ class BridgeService : Service(), BridgeClient.Listener {
         private const val GOOGLE_TV_PACKAGE = "com.google.android.videos"
         private const val GOOGLE_TV_REMOTE_ACTION = "com.google.android.apps.googletv.ACTION_VIRTUAL_REMOTE"
         private const val NOTIFICATION_ID = 1
+        private const val KEYBOARD_NOTIFICATION_ID = 2
+        private const val CHANNEL_KEYBOARD = "keyboard"
         private const val CHANNEL_MEDIA = "media"
         private const val CHANNEL_STATUS = "status"
         private const val ACTION_STOP = "com.larvey.atvbridge.STOP"

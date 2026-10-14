@@ -128,7 +128,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             self.keyboard_focused = False
         LOG.info("Connected to Apple TV %s (%s)", conf.name, conf.address)
         self._atv_volume_control = self._volume_control()
-        self._set(connected=True, error=None, name=conf.name, power=self._power_str())
+        self._set(connected=True, error=None, name=conf.name, power=self._power_str(),
+                  keyboard=self.keyboard_focused, keyboard_text=None)
         self.update_volume_source()
         await self._refresh_now_playing()
 
@@ -193,6 +194,7 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 text = await self._start_text_session()
             except Exception as exc:  # noqa: BLE001
                 LOG.debug("Starting text input session failed: %s", exc)
+        self._set(keyboard=focused, keyboard_text=text if focused else None)
         for cb in list(self._keyboard_listeners):
             try:
                 cb(focused, text)

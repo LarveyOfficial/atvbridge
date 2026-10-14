@@ -3,6 +3,11 @@
     <string name="app_name">ATV Bridge</string>
     <string name="channel_media">Media controls</string>
     <string name="channel_status">Connection status</string>
+    <string name="channel_keyboard">Text input on the Apple TV</string>
+    <string name="keyboard_title">%1$s is waiting for text</string>
+    <string name="keyboard_body">Tap to type with the remote.</string>
+    <string name="keyboard_body_text">“%1$s”. Tap to type with the remote.</string>
+    <string name="keyboard_chip">Type</string>
     <string name="rewind">Back 10 seconds</string>
     <string name="forward">Forward 10 seconds</string>
     <string name="disconnect">Disconnect</string>

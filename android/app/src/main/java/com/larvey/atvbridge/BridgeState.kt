@@ -24,6 +24,9 @@ data class BridgeState(
     /** "absolute" (level can be set), "relative" (up/down steps only) or null. */
     val volumeControl: String?,
     val nowPlaying: NowPlaying?,
+    /** The Apple TV is showing a text field (search, login...) waiting for input. */
+    val keyboardFocused: Boolean,
+    val keyboardText: String?,
     /** SystemClock.elapsedRealtime() at which nowPlaying.positionMs was current. */
     val positionTime: Long,
 ) {
@@ -58,6 +61,8 @@ data class BridgeState(
                 volume = atv.num("volume")?.toInt(),
                 volumeControl = atv.str("volume_control"),
                 nowPlaying = np,
+                keyboardFocused = atv.optBoolean("keyboard"),
+                keyboardText = atv.str("keyboard_text"),
                 positionTime = receivedAt,
             )
         }
