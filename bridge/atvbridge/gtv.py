@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from zeroconf import ServiceInfo
 from zeroconf.asyncio import AsyncZeroconf
 
+from . import voice
 from .certs import DEFAULT_EXPONENT, EASY_CODE, ServerIdentity, fingerprint
 from .tls import ProtobufFraming, TLSConnection, make_context
 
@@ -78,6 +79,10 @@ HOLD_DELAY = 0.5        # seconds before a press counts as held
 REPEAT_INTERVAL = 0.15  # arrow auto-repeat rate while held
 MAX_HOLD = 10.0         # stop repeating if the release never arrives
 
+# The Google TV voice assistant; reported in remote_voice_begin like a real TV.
+VOICE_PACKAGE = "com.google.android.katniss"
+VOICE_MAX_SECONDS = 20.0  # end a voice session if the phone never sends remote_voice_end
+
 # Level reported to phones when the Apple TV can only step volume up/down.
 RELATIVE_VOLUME_PLACEHOLDER = 50
 MAX_VOLUME_STEPS = 5
@@ -119,6 +124,8 @@ class GoogleTVServer:
         self._zc: AsyncZeroconf | None = None
         self._services: list[ServiceInfo] = []
         self.on_change: Callable[[], None] = lambda: None
+        # Called with the PCM audio of each finished voice session.
+        self.on_voice: Callable[[bytes, str], None] = self._save_voice
         appletv.on_change(self._on_appletv_change)
         appletv.on_keyboard(self._on_keyboard)
 
@@ -192,6 +199,9 @@ class GoogleTVServer:
             for info in self._services:
                 await self._zc.async_unregister_service(info)
             await self._zc.async_close()
+
+    def _save_voice(self, pcm: bytes, phone: str) -> None:
+        voice.save_wav(pcm, self.store.data_dir / "voice" / "last.wav")
 
     # --- Apple TV -> phones ---------------------------------------------------------
     def _on_appletv_change(self, state: dict[str, Any]) -> None:
@@ -332,6 +342,9 @@ class RemoteSession(TLSConnection):
         self._ime_counter = 0
         self._field_counter = 0
         self._press: _Press | None = None
+        self._voice_id: int | None = None
+        self._voice_pcm = bytearray()
+        self._voice_timeout: asyncio.TimerHandle | None = None
 
     def select_context(self):  # noqa: ANN201
         return self.server.context_for(self.server.exponent_for_remote(self.peer_ip), self._verify)
@@ -377,6 +390,8 @@ class RemoteSession(TLSConnection):
         if self._ping_task:
             self._ping_task.cancel()
         self._cancel_press()
+        if self._voice_timeout:
+            self._voice_timeout.cancel()
 
     async def _pinger(self) -> None:
         while True:
@@ -401,7 +416,8 @@ class RemoteSession(TLSConnection):
             self.handle(msg)
 
     def handle(self, msg: RemoteMessage) -> None:
-        if not (msg.HasField("remote_ping_request") or msg.HasField("remote_ping_response")):
+        if not (msg.HasField("remote_ping_request") or msg.HasField("remote_ping_response")
+                or msg.HasField("remote_voice_payload")):
             LOG.debug("Remote message from %s: %s", self.peer_ip, str(msg).replace("\n", " "))
         if msg.HasField("remote_configure"):
             reply = RemoteMessage()
@@ -424,6 +440,14 @@ class RemoteSession(TLSConnection):
             self._set_volume(msg.remote_set_volume_level.volume_level)
         elif msg.HasField("remote_app_link_launch_request"):
             self._run("launch", app=msg.remote_app_link_launch_request.app_link)
+        elif msg.HasField("remote_voice_begin"):
+            pass  # the phone echoing our session id: it starts streaming next
+        elif msg.HasField("remote_voice_payload"):
+            if msg.remote_voice_payload.session_id == self._voice_id:
+                self._voice_pcm += msg.remote_voice_payload.samples
+        elif msg.HasField("remote_voice_end"):
+            if msg.remote_voice_end.session_id == self._voice_id:
+                self._end_voice()
         elif msg.HasField("remote_ime_batch_edit"):
             edits = msg.remote_ime_batch_edit.edit_info
             if edits:
@@ -433,6 +457,10 @@ class RemoteSession(TLSConnection):
 
     def _key(self, code: int, direction: int) -> None:
         name = RemoteKeyCode.Name(code)
+        if name in ("KEYCODE_SEARCH", "KEYCODE_ASSIST", "KEYCODE_VOICE_ASSIST"):
+            if direction != RemoteDirection.END_LONG:
+                self._start_voice()
+            return
         cmd = KEY_MAP.get(name)
         if cmd is None:
             LOG.debug("No mapping for %s", name)
@@ -478,6 +506,40 @@ class RemoteSession(TLSConnection):
         if self._press:
             self._press.cancel()
             self._press = None
+
+    # --- voice ------------------------------------------------------------------------
+    def _start_voice(self) -> None:
+        if self._voice_id is not None:
+            self._end_voice()  # mic pressed again: finish the current utterance
+            return
+        self._voice_id = secrets.randbelow(2**31 - 1) + 1
+        self._voice_pcm = bytearray()
+        self._voice_timeout = asyncio.get_event_loop().call_later(VOICE_MAX_SECONDS, self._end_voice)
+        msg = RemoteMessage()
+        msg.remote_voice_begin.session_id = self._voice_id
+        msg.remote_voice_begin.package_name = VOICE_PACKAGE
+        self.send(msg)
+        LOG.info("Voice session %s started by %s", self._voice_id, self.peer_ip)
+
+    def _end_voice(self) -> None:
+        if self._voice_id is None:
+            return
+        session_id, self._voice_id = self._voice_id, None
+        if self._voice_timeout:
+            self._voice_timeout.cancel()
+            self._voice_timeout = None
+        pcm = voice.trim_padding(bytes(self._voice_pcm))
+        self._voice_pcm = bytearray()
+        msg = RemoteMessage()
+        msg.remote_voice_end.session_id = session_id
+        self.send(msg)
+        duration, rms = voice.stats(pcm)
+        LOG.info("Voice session %s ended: %.1f s of audio, level %.3f", session_id, duration, rms)
+        if pcm:
+            try:
+                self.server.on_voice(pcm, self.peer_ip)
+            except Exception:  # noqa: BLE001
+                LOG.exception("Voice handler failed")
 
     def _run(self, cmd: str, **kwargs: Any) -> None:
         async def go() -> None:

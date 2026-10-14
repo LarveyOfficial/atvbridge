@@ -240,6 +240,25 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         await wait_for(lambda: len(self.atv.commands) == 2)
         self.assertEqual(self.atv.commands, [("volume_down", {})] * 2)
 
+    async def test_voice_session_captures_audio(self) -> None:
+        import array
+        import math
+
+        heard: list[bytes] = []
+        self.server.on_voice = lambda pcm, phone: heard.append(pcm)  # type: ignore[assignment]
+        self.remote = AndroidTVRemote(
+            "Pixel Test", self.remote._certfile, self.remote._keyfile, "127.0.0.1",
+            api_port=gtv.REMOTE_PORT, pair_port=gtv.PAIRING_PORT, enable_voice=True,
+        )
+        await self.connected_remote()
+        # 0.5 s of a 440 Hz tone, 16-bit mono 8 kHz like the phone's mic stream.
+        tone = array.array("h", (int(8000 * math.sin(2 * math.pi * 440 * i / 8000)) for i in range(4000)))
+        async with await self.remote.start_voice() as stream:
+            stream.send_chunk(tone.tobytes())
+        await wait_for(lambda: heard)
+        # Zero padding from the phone's 8 KB chunks is trimmed off.
+        self.assertEqual(heard[0], tone.tobytes().rstrip(b"\x00"))
+
     async def test_options_offer_output_encoding(self) -> None:
         # Google's remote app (Polo) needs our *output* encodings to match its input
         # encodings, or it aborts with STATUS_BAD_CONFIGURATION (401).
