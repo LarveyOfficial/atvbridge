@@ -310,11 +310,11 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         replace = lambda a, b, t: ime._bytes(2, ime._int(1, a) + ime._int(2, b) + ime._str(3, t))  # noqa: E731
         select = lambda a, b: ime._bytes(1, ime._int(2, a) + ime._int(3, b))  # noqa: E731
         session.on_data(ProtobufFraming.encode(self.edit_frame(fid, counter, replace(4, 4, "nger things"))))
-        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger things"}))
+        self.assertEqual(await self.atv.next_command(), ("type_text", {"text": "stranger things"}))
         # Backspace twice, as a selection + replace with "".
         session.on_data(ProtobufFraming.encode(self.edit_frame(
             fid, self.server.ime_text_counter, select(13, 15), replace(13, 15, ""))))
-        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger thin"}))
+        self.assertEqual(await self.atv.next_command(), ("type_text", {"text": "stranger thin"}))
         # Edits for a field that is no longer focused are ignored.
         session.on_data(ProtobufFraming.encode(self.edit_frame(fid + 7, 0, replace(0, 0, "x"))))
         await asyncio.sleep(0.1)

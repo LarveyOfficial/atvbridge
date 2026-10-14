@@ -19,6 +19,7 @@ from pyatv.interface import (
     PushListener,
 )
 
+from . import rti
 from .store import Store
 
 LOG = logging.getLogger(__name__)
@@ -44,6 +45,9 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self._lost = asyncio.Event()
         self.keyboard_focused = False
         self._focus_changed = asyncio.Event()
+        # Text input session for the focused field: (session uuid, text we know is in it).
+        self._ti_session: bytes | None = None
+        self._ti_text: str | None = None
         self._apps: dict[str, str] = {}
         self._apps_at = 0.0
 
@@ -166,11 +170,12 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
 
     async def _notify_keyboard(self, focused: bool) -> None:
         text = None
+        self._ti_session = self._ti_text = None
         if focused and self.atv:
             try:
-                text = await self.atv.keyboard.text_get()
+                text = await self._start_text_session()
             except Exception as exc:  # noqa: BLE001
-                LOG.debug("text_get failed: %s", exc)
+                LOG.debug("Starting text input session failed: %s", exc)
         for cb in list(self._keyboard_listeners):
             try:
                 cb(focused, text)
@@ -269,6 +274,43 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 return False
         return True
 
+    def _companion_api(self):  # noqa: ANN202
+        assert self.atv is not None
+        keyboard = getattr(self.atv.keyboard, "_interfaces", {}).get(Protocol.Companion)
+        api = getattr(keyboard, "api", None)
+        if api is None:
+            raise NotImplementedError("Companion text input is not available")
+        return api
+
+    async def _start_text_session(self) -> str:
+        """Open (or join) the focused field's text input session; returns its current text."""
+        from pyatv.protocols.companion import keyed_archiver
+
+        response = await self._companion_api()._text_input_start()
+        ti_data = response.get("_c", {}).get("_tiD")
+        if ti_data is None:
+            raise ConnectionError("no text input session")
+        session, text = keyed_archiver.read_archive_properties(
+            ti_data, ["sessionUUID"], ["documentState", "docSt", "contextBeforeInput"],
+        )
+        self._ti_session = bytes(session)
+        self._ti_text = text or ""
+        return self._ti_text
+
+    async def type_text(self, text: str) -> None:
+        """Make the focused field read `text`, sending only the difference (backspaces +
+        new characters) instead of clearing and re-typing it like text_set does."""
+        if self._ti_session is None or self._ti_text is None:
+            await self._start_text_session()
+        assert self._ti_session is not None and self._ti_text is not None
+        delete, insert = rti.diff(self._ti_text, text)
+        if not delete and not insert:
+            return
+        await self._companion_api()._send_event(
+            "_tiC", {"_tiV": 1, "_tiD": rti.text_operation_payload(self._ti_session, insert, delete)},
+        )
+        self._ti_text = text
+
     async def _mrp_hid(self, usage_page: int, usage: int) -> None:
         """Press a HID key over MRP. pyatv only exposes a fixed set of keys (no mute), so this
         reaches into its MRP remote control; fails cleanly if pyatv's internals change."""
@@ -318,6 +360,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 await self.atv.power.turn_off()
             else:
                 await self.atv.power.turn_on()
+        elif name == "type_text":
+            await self.type_text(kwargs["text"])
         elif name == "text_set":
             if kwargs["text"]:
                 await self.atv.keyboard.text_set(kwargs["text"])

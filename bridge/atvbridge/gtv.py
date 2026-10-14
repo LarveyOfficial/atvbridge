@@ -275,7 +275,7 @@ class GoogleTVServer:
         while self._text_target != sent:
             sent = self._text_target
             try:
-                await self.appletv.command("text_set", text=sent)
+                await self.appletv.command("type_text", text=sent)
             except Exception as exc:  # noqa: BLE001
                 LOG.warning("Typing on the Apple TV failed: %s", exc)
                 return
