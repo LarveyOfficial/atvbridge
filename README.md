@@ -93,6 +93,14 @@ docker logs appletv-siri-voice      # shows the HomeKit setup code
 If Siri isn't reachable the bridge falls back to local speech recognition (below), so the
 mic keeps working either way. Without the Siri container, simply leave `ATVB_SIRI_URL` out.
 
+### b3. Optional: real volume from an LG TV
+
+The Apple TV changes the TV's volume with HDMI-CEC/IR presses and can't read the level, so by
+default the phone gets volume up/down only. An LG webOS TV reports the real level (also when it
+drives a soundbar over HDMI ARC) and pushes changes live, so with it the phone gets a real slider
+that follows the LG remote too. Add `-e ATVB_LG_HOST=<tv-ip>` and accept the prompt on the TV the
+first time (or copy `data/lg.json` from an earlier setup).
+
 ### c. Check it
 
 Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's playing.
@@ -104,6 +112,7 @@ Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's pl
 | `ATVB_HOST_IP` | auto | IP advertised over mDNS. Set this if Unraid has several interfaces/bridges and the logs show the wrong IP. |
 | `ATVB_WEB_PORT` | 8090 | Dashboard + companion WebSocket port. |
 | `ATVB_LOG_LEVEL` | INFO | `DEBUG` logs every key press and pairing message. |
+| `ATVB_LG_HOST` | (unset) | LG webOS TV IP for real volume (see below). Saved with its pairing key in `data/lg.json`. |
 | `ATVB_SIRI_URL` | (unset) | Siri container's control API, e.g. `http://127.0.0.1:8477` (§1 b2). |
 | `ATVB_WHISPER_MODEL` | base.en | Local speech model (downloaded once to `/data/models`, ~140 MB). `small.en` is more accurate but slower. |
 

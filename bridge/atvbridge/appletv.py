@@ -22,6 +22,7 @@ from pyatv.interface import (
 
 from . import rti
 from .artwork import ArtworkFinder
+from .lgtv import LGTV
 from .store import Store
 
 LOG = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         # Text input session for the focused field: (session uuid, text we know is in it).
         self._ti_session: bytes | None = None
         self._finder = ArtworkFinder()
+        # Optional TV that reports/sets the real volume (see lgtv.py).
+        self.tv: LGTV | None = None
+        self._atv_volume_control: str | None = None
         self._ext_art_key: str | None = None
         self._ti_text: str | None = None
         self._apps: dict[str, str] = {}
@@ -123,8 +127,9 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         except Exception:  # noqa: BLE001
             self.keyboard_focused = False
         LOG.info("Connected to Apple TV %s (%s)", conf.name, conf.address)
-        self._set(connected=True, error=None, name=conf.name, power=self._power_str(),
-                  volume_control=self._volume_control(), volume=None)
+        self._atv_volume_control = self._volume_control()
+        self._set(connected=True, error=None, name=conf.name, power=self._power_str())
+        self.update_volume_source()
         await self._refresh_now_playing()
 
     def _close(self) -> set[asyncio.Task]:
@@ -157,8 +162,15 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self._set(power=self._power_str())
 
     def volume_update(self, old_level: float, new_level: float) -> None:
-        if self.state.get("volume_control") == "absolute":
+        if self._atv_volume_control == "absolute" and not (self.tv and self.tv.available):
             self._set(volume=new_level)
+
+    def update_volume_source(self) -> None:
+        """Volume comes from the TV when it reports a real level, else from the Apple TV."""
+        if self.tv and self.tv.available:
+            self._set(volume=self.tv.volume, muted=self.tv.muted, volume_control="absolute")
+        else:
+            self._set(volume=None, muted=None, volume_control=self._atv_volume_control)
 
     def volume_device_update(self, output_device, old_level: float, new_level: float) -> None:  # noqa: ANN001
         pass
@@ -367,6 +379,13 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             await rc.skip_backward(kwargs.get("seconds", 10))
         elif name == "seek":
             await rc.set_position(int(kwargs["position"]))
+        elif name in ("volume_up", "volume_down", "set_volume", "mute") and self.tv and self.tv.available:
+            if name == "set_volume":
+                await self.tv.set_volume(float(kwargs["level"]))
+            elif name == "mute":
+                await self.tv.toggle_mute()
+            else:
+                await self.tv.step(1 if name == "volume_up" else -1)
         elif name == "volume_up":
             await self.atv.audio.volume_up()
         elif name == "volume_down":

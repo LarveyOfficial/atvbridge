@@ -709,7 +709,7 @@ class RemoteSession(TLSConnection):
         v.player_model = self.server.store.display_name()
         v.volume_max = 100
         v.volume_level = int(vol)
-        v.volume_muted = False
+        v.volume_muted = bool(st.get("muted"))
         self.send(msg)
 
     def _set_volume(self, level: int) -> None:

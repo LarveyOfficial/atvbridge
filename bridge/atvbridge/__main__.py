@@ -9,6 +9,7 @@ import signal
 
 from .appletv import AppleTV
 from .gtv import GoogleTVServer
+from .lgtv import LGTV
 from .store import Store
 from .voice import VoiceAssistant
 from .web import Web
@@ -21,6 +22,9 @@ async def main() -> None:
     )
     store = Store()
     appletv = AppleTV(store)
+    tv = LGTV(store.data_dir)
+    tv.on_change = appletv.update_volume_source
+    appletv.tv = tv
     gtv = GoogleTVServer(store, appletv)
     web = Web(store, appletv, gtv)
     voice = VoiceAssistant(appletv, store.data_dir)
@@ -31,6 +35,7 @@ async def main() -> None:
     web.voice = voice
 
     appletv.start()
+    tv.start()
     voice.preload()
     await gtv.start()
     await web.start(int(os.environ.get("ATVB_WEB_PORT", 8090)))
@@ -44,6 +49,7 @@ async def main() -> None:
     await web.stop()
     await gtv.stop()
     await appletv.stop()
+    await tv.stop()
     await voice.siri.close()
 
 

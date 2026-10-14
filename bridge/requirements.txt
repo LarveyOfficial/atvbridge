@@ -8,3 +8,5 @@ protobuf==7.36.2
 zeroconf==0.151.5
 # Voice commands from the phone mic (local speech-to-text; model downloads to /data/models)
 faster-whisper==1.2.1
+# Real volume from an LG webOS TV (optional; data/lg.json or ATVB_LG_HOST)
+aiowebostv==0.10.0
