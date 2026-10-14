@@ -1,7 +1,7 @@
 services:
   atvbridge:
     # Prebuilt by GitHub Actions; or replace with `build: .` to build locally.
-    image: ghcr.io/OWNER/atvbridge:latest
+    image: ghcr.io/larveyofficial/atvbridge:latest
     container_name: atvbridge
     # Required: mDNS for phones (Google TV remote) and HomeKit (Siri voice remote),
     # and the Google TV / HomeKit ports must be on the LAN directly.

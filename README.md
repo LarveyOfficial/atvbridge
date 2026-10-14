@@ -28,7 +28,7 @@ See `HANDOFF.md` for protocol details (including the "000000" pairing trick).
 
 One container does everything: the Google TV remote bridge, the dashboard (which also hands out
 the Android app) and the Siri voice remote. GitHub Actions builds it as
-`ghcr.io/OWNER/atvbridge:latest` (amd64 + arm64) on every push to `main`.
+`ghcr.io/larveyofficial/atvbridge:latest` (amd64 + arm64) on every push to `main`.
 
 It **must use host networking**: phones find it over mDNS, the Apple TV finds the Siri remote
 over HomeKit/mDNS, and both connect straight to its ports (8090, 6466, 6467, 47129).
@@ -42,11 +42,11 @@ docker run -d --name atvbridge \
   --network host \
   --restart unless-stopped \
   -v /mnt/user/appdata/atvbridge:/data \
-  ghcr.io/OWNER/atvbridge:latest
+  ghcr.io/larveyofficial/atvbridge:latest
 docker logs -f atvbridge     # Ctrl+C to stop following
 ```
 
-It shows up in Unraid's Docker tab; **update** later with `docker pull ghcr.io/OWNER/atvbridge:latest`
+It shows up in Unraid's Docker tab; **update** later with `docker pull ghcr.io/larveyofficial/atvbridge:latest`
 followed by `docker rm -f atvbridge` and the `docker run` above (or Unraid's "check for updates").
 Or use `bridge/docker-compose.yml` with the Compose Manager plugin.
 
