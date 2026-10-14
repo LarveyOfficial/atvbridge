@@ -116,7 +116,8 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         await self.pair("000000")
         phone = next(iter(self.store.phones.values()))
         self.assertEqual(phone["name"], "Pixel Test")
-        self.assertNotEqual(phone["server_e"], 65537)
+        # (No check on server_e: with a fresh random key, the default exponent itself makes
+        # 000000 valid about 1 time in 256, and then it is correctly kept.)
 
     async def test_random_code_when_easy_pairing_disabled(self) -> None:
         self.store.data["easy_pairing"] = False

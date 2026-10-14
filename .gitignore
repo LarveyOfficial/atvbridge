@@ -18,3 +18,6 @@ local.properties
 
 # Built APK copied to the project root for sideloading
 *.apk
+
+# Exported public signing certificate (for Google developer verification)
+atvbridge-signing-cert.*
