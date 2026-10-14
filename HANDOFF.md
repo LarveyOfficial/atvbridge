@@ -60,44 +60,65 @@ Build a bridge service (targeted for Docker on an Unraid server) that allows And
 ## 4. Codebase Layout
 
 Location: `/storage/emulated/10/Documents/Antigravity/AppleTV Remote/`
+(inside the Debian VM: `/mnt/shared/Documents/Antigravity/AppleTV Remote/`). Git repo, branch `main`.
 
 ```text
 AppleTV Remote/
+├── README.md                    # Setup, Unraid deploy, phone pairing, troubleshooting
 ├── HANDOFF.md                   # This summary document
+├── ATVBridge.apk                # Latest built companion app (git-ignored)
 ├── bridge/
 │   ├── atvbridge/
-│   │   ├── __init__.py          # Package init
-│   │   ├── __main__.py          # Application runner & signal handling
+│   │   ├── __main__.py          # Application runner, signal handling, clean shutdown
 │   │   ├── appletv.py           # pyatv wrapper: connection lifecycle, push metadata, commands
 │   │   ├── certs.py             # Server RSA key derivation & exponent search for '000000' PIN
 │   │   ├── gtv.py               # Android TV Remote v2 server (Ports 6466 & 6467, mDNS, key maps)
 │   │   ├── store.py             # Persistent JSON storage for paired phones and Apple TV config
 │   │   ├── tls.py               # pyOpenSSL async TLS transport & varint protobuf parser
 │   │   ├── web.py               # aiohttp web server: REST API, WebSocket (/ws), artwork endpoint
-│   │   └── static/              # Web dashboard frontend assets
-│   ├── data/
-│   │   └── config.json          # Live configuration containing Chomusuke's credentials
-│   └── .gitignore
-└── scratch/
-    └── ref/                     # Extracted reference sources from androidtvremote2
+│   │   └── static/index.html    # Dashboard (no external deps)
+│   ├── tests/test_gtv.py        # End-to-end protocol tests (androidtvremote2 as the phone)
+│   ├── data/                    # config.json (Apple TV credentials) + server_key.pem; git-ignored
+│   ├── Dockerfile, docker-compose.yml, requirements.txt
+└── android/                     # Companion app (Kotlin, platform MediaSession + OkHttp, minSdk 29)
+    └── app/src/main/java/com/atvbridge/companion/
+        ├── BridgeService.kt     # Foreground service: WebSocket -> MediaSession + media notification
+        ├── BridgeClient.kt      # OkHttp WebSocket with reconnect/backoff, artwork fetch
+        ├── BridgeState.kt       # Parses the bridge "state" message
+        ├── Discovery.kt         # NSD discovery of _atvbridge._tcp
+        ├── MainActivity.kt      # Settings screen
+        ├── BootReceiver.kt      # Restart after reboot / app update
+        └── Prefs.kt
 ```
 
 ---
 
-## 5. Next Steps / Roadmap
+## 5. Status (2026-10-14, Claude Code)
 
-1. **Web Dashboard Frontend (`bridge/atvbridge/static/index.html`)**:
-   - Build a responsive web UI displaying:
-     - Real-time Apple TV connection status, power, and now-playing metadata.
-     - Live pairing requests and PIN codes.
-     - Paired phone list with ability to revoke keys.
-     - Configuration interface for initial setup or switching Apple TVs.
-2. **Dockerization for Unraid**:
-   - Author a `Dockerfile` and `docker-compose.yml`.
-   - Set up dependencies: `pyatv`, `pyOpenSSL`, `aiohttp`, `zeroconf`, `protobuf`, `cryptography`.
-   - Note for Unraid template: Container **must** run in `host` network mode so mDNS and ports 6466/6467/8090 are directly reachable by Android phones.
-3. **Android Companion App**:
-   - Develop a minimal Android app (Kotlin / Jetpack) that runs a background `MediaSessionService`.
-   - Connects to `ws://<bridge-ip>:8090/ws`.
-   - Maps playback events to Android's `MediaSessionCompat` / `MediaSession` to generate the native notification / lock screen media card.
-   - Forwards transport controls (play, pause, skip, seek) back over WebSocket.
+**Done**
+- Bridge startup fixed for current libraries: pyatv 0.18 added the abstract
+  `AudioListener.volume_device_update`; zeroconf rejects the 16-byte `_androidtvremote2`
+  service name unless `strict=False`. Clean shutdown (awaits pyatv close tasks).
+- Verified live against Chomusuke from the VM: connects, now-playing (YouTube) and volume come through.
+- Google TV protocol verified end-to-end with `androidtvremote2` as the client (6 tests):
+  000000 easy pairing, random-code pairing, key mapping, IME text, app links, state push,
+  reconnect after restart, revoked phone must re-pair.
+- Dashboard (`static/index.html`): status, now playing with live progress/seek/volume,
+  remote pad + keyboard shortcuts, pairing-code banner, paired phones (revoke), settings,
+  Apple TV scan + two-step PIN pairing wizard.
+- Docker: `Dockerfile`, `docker-compose.yml`, pinned `requirements.txt` (clean-venv install verified).
+- Android companion app built (`./gradlew assembleRelease`), lint clean, 6 JVM unit tests.
+  Media card with artwork/seek/±10 s, phone volume keys -> Apple TV (`VolumeProvider`),
+  mDNS discovery, auto-reconnect, start on boot. Foreground service type `connectedDevice`
+  (so boot start is allowed on Android 15+).
+
+**Not yet tested on real hardware** (the VM is NAT'ed; phones can't reach it):
+- Pairing a real phone via the Google TV remote; the official app may differ from
+  `androidtvremote2` in details (e.g. whether it pins the server cert when the phone's IP changes;
+  `exponent_for_remote` picks the server key by the phone's last IP).
+- The companion app on a real phone.
+
+**Next**
+1. Deploy to Unraid (README §1) and pair a phone.
+2. Fix whatever real-device testing turns up.
+3. Optional: Unraid Community Apps template XML; prebuilt image on GHCR.

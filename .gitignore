@@ -15,3 +15,6 @@ local.properties
 .idea/
 *.iml
 .kotlin/
+
+# Built APK copied to the project root for sideloading
+*.apk

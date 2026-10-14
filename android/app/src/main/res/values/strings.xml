@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ATV Bridge</string>
+    <string name="channel_media">Media controls</string>
+    <string name="channel_status">Connection status</string>
+    <string name="rewind">Back 10 seconds</string>
+    <string name="forward">Forward 10 seconds</string>
+    <string name="disconnect">Disconnect</string>
+
+    <string name="status_not_running">Media controls are off</string>
+    <string name="status_connecting">Connecting to bridge…</string>
+    <string name="status_atv_offline">%1$s: %2$s</string>
+    <string name="status_asleep">%1$s is asleep</string>
+    <string name="status_idle">Connected to %1$s · nothing playing</string>
+    <string name="status_playing">Playing: %1$s</string>
+    <string name="status_paused">Paused: %1$s</string>
+
+    <string name="start">Start media controls</string>
+    <string name="stop">Stop media controls</string>
+    <string name="section_bridge">Bridge address</string>
+    <string name="section_options">Options</string>
+    <string name="url_hint">192.168.0.10:8090</string>
+    <string name="find">Find on network</string>
+    <string name="dashboard">Open dashboard</string>
+    <string name="searching">Searching for bridges…</string>
+    <string name="invalid_url">Enter the bridge address, e.g. 192.168.0.10:8090</string>
+    <string name="volume_keys">Phone volume buttons control the Apple TV</string>
+    <string name="start_on_boot">Start automatically after reboot</string>
+    <string name="battery">Allow running in the background</string>
+    <string name="help">The Apple TV\'s now-playing card appears on your lock screen and in Quick Settings while something is playing. For the D-pad and keyboard, use the Google TV remote (Quick Settings tile or Google Home app) and pick your Apple TV; the pairing code is shown on the bridge dashboard.</string>
+</resources>
