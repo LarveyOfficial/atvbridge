@@ -48,6 +48,9 @@
   button:disabled { opacity: .5; cursor: default; }
   button.primary { background: var(--accent); color: var(--accent-text); }
   button.danger { color: var(--bad); }
+  a.button { display: inline-block; text-decoration: none; padding: 8px 14px; border-radius: 10px;
+             background: var(--pad); color: inherit; }
+  a.button.primary { background: var(--accent); color: var(--accent-text); }
   button.icon { display: inline-grid; place-items: center; padding: 0; width: 44px; height: 44px; border-radius: 50%; }
   button.icon.big { width: 56px; height: 56px; }
   svg { width: 22px; height: 22px; fill: currentColor; }
@@ -186,6 +189,12 @@
       <h2>Paired phones</h2>
       <ul class="list" id="phones"></ul>
       <div class="muted small" id="no-phones">No phones paired yet.</div>
+      <div class="hidden" id="app-download" style="margin-top:12px">
+        <a class="button primary" href="/ATVBridge.apk" download>Get the Android app</a>
+        <div class="small muted" style="margin-top:6px">Media controls on your lock screen and in Quick
+          Settings. Open this page on the phone, download, then open the file to install (allow your
+          browser to install apps when asked).</div>
+      </div>
       <details style="margin-top:12px">
         <summary class="small" style="cursor:pointer">How to connect an Android phone</summary>
         <ol class="steps small" style="margin-top:8px">
@@ -212,6 +221,16 @@
           <input type="checkbox" id="easy">
         </label>
       </div>
+    </section>
+
+    <section class="card hidden" id="siri-card">
+      <h2>Siri (mic button)</h2>
+      <div id="siri-status" class="small"></div>
+      <ol class="steps small" id="siri-steps" style="margin-top:8px">
+        <li>On an iPhone/iPad/Mac in the same Home as the Apple TV, open the <b>Home</b> app.</li>
+        <li><b>+ → Add Accessory → More options…</b> → pick <b>Voice Remote</b>.</li>
+        <li>Enter the setup code <b class="code" id="siri-code" style="font-size:18px"></b></li>
+      </ol>
     </section>
 
     <section class="card span" id="setup-card">
@@ -327,6 +346,13 @@ function render() {
 
   renderNowPlaying();
 
+  $("#app-download").classList.toggle("hidden", !s.app_download);
+
+  // Siri voice remote (bundled HomeKit accessory)
+  const siri = s.siri || {};
+  $("#siri-card").classList.toggle("hidden", !siri.enabled);
+  if (siri.enabled && !siriPoll) { siriPoll = setInterval(refreshSiri, 15000); refreshSiri(); }
+
   // Last voice command from a phone's mic button
   const v = s.voice;
   $("#voice").classList.toggle("hidden", !v);
@@ -379,6 +405,22 @@ function render() {
   $("#atv-detail").textContent = cfg.configured ? [cfg.model, cfg.address].filter(Boolean).join(" · ") : "";
   $("#setup-toggle").textContent = cfg.configured ? "Change Apple TV" : "Set up";
   if (!cfg.configured && !setupTouched) $("#setup").classList.remove("hidden");
+}
+
+let siriPoll = null;
+async function refreshSiri() {
+  let info;
+  try { info = await (await fetch("/api/siri")).json(); } catch { return; }
+  const st = info.state, el = $("#siri-status");
+  $("#siri-code").textContent = info.pincode || "see the Siri container's logs";
+  const targets = st ? Object.values(st.targets || {}) : [];
+  const paired = !!(st && (st.active || targets.length));
+  $("#siri-steps").classList.toggle("hidden", paired);
+  if (!st) el.textContent = info.bundled && !info.running ? "Starting…" : "Siri voice remote not reachable.";
+  else if (!paired) el.textContent = "Not paired yet. Add it in the Home app:";
+  else if (st.siriAvailable && (st.dataStreams || []).length) el.textContent = "✅ Paired with the Apple TV. The phone's mic button talks to Siri.";
+  else if (st.recovering) el.textContent = "Paired; reconnecting the audio stream (about a minute)…";
+  else el.textContent = "Paired, waiting for the Apple TV's audio stream. The mic falls back to local recognition meanwhile.";
 }
 
 let lastArtId = null;

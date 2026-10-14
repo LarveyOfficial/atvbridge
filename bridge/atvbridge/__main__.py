@@ -10,6 +10,8 @@ import signal
 from .appletv import AppleTV
 from .gtv import GoogleTVServer
 from .lgtv import LGTV
+from .siri import SiriRelay
+from .sirihost import SiriHost
 from .store import Store
 from .voice import VoiceAssistant
 from .web import Web
@@ -27,15 +29,19 @@ async def main() -> None:
     appletv.tv = tv
     gtv = GoogleTVServer(store, appletv)
     web = Web(store, appletv, gtv)
-    voice = VoiceAssistant(appletv, store.data_dir)
+    siri_host = SiriHost(store.data_dir, store.display_name())
+    siri_url = os.environ.get("ATVB_SIRI_URL") or (siri_host.url if siri_host.enabled else "")
+    voice = VoiceAssistant(appletv, store.data_dir, SiriRelay(siri_url))
     gtv.on_voice_begin = voice.begin
     gtv.on_voice_chunk = voice.chunk
     gtv.on_voice = voice.handle
     voice.on_result = web.broadcast
     web.voice = voice
+    web.siri_host = siri_host
 
     appletv.start()
     tv.start()
+    siri_host.start()
     voice.preload()
     await gtv.start()
     await web.start(int(os.environ.get("ATVB_WEB_PORT", 8090)))
@@ -50,6 +56,7 @@ async def main() -> None:
     await gtv.stop()
     await appletv.stop()
     await tv.stop()
+    await siri_host.stop()
     await voice.siri.close()
 
 

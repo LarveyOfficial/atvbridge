@@ -15,11 +15,24 @@ android {
         versionName = "1.0"
     }
 
+    // CI signs with the keystore from ATVB_KEYSTORE (see .github/workflows/android.yml);
+    // without it, release builds use the local debug key (fine for a sideloaded app).
+    val keystore = System.getenv("ATVB_KEYSTORE")?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("ATVB_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ATVB_KEY_ALIAS")
+                keyPassword = System.getenv("ATVB_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sideloaded personal app: sign release builds with the debug key.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug")
         }
     }
 

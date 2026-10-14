@@ -1,4 +1,5 @@
 data/
 __pycache__/
 *.pyc
-siri-data/
+# Companion app copied in by CI for the dashboard download
+atvbridge/static/*.apk

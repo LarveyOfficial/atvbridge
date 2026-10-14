@@ -24,100 +24,71 @@ See `HANDOFF.md` for protocol details (including the "000000" pairing trick).
 
 ---
 
-## 1. Deploy the bridge on Unraid
+## 1. Deploy on Unraid
 
-The container **must use host networking**: phones find it over mDNS and connect
-straight to ports 6466/6467/8090.
+One container does everything: the Google TV remote bridge, the dashboard (which also hands out
+the Android app) and the Siri voice remote. GitHub Actions builds it as
+`ghcr.io/OWNER/atvbridge:latest` (amd64 + arm64) on every push to `main`.
 
-### a. Copy the files
+It **must use host networking**: phones find it over mDNS, the Apple TV finds the Siri remote
+over HomeKit/mDNS, and both connect straight to its ports (8090, 6466, 6467, 47129).
 
-From any computer on your network, copy the `bridge/` folder to the Unraid share
-`appdata` so it ends up at `/mnt/user/appdata/atvbridge/src/`.
+### a. Start the container
 
-Then copy your existing pairing data so you don't have to pair with the Apple TV again:
-
-```
-bridge/data/config.json    →  /mnt/user/appdata/atvbridge/data/config.json
-bridge/data/server_key.pem →  /mnt/user/appdata/atvbridge/data/server_key.pem
-```
-
-(Skip this to start fresh. The dashboard has a setup wizard for pairing the Apple TV.)
-
-### b. Build and start the container
-
-Open the Unraid web terminal (the `>_` icon in the top right) and run:
+Unraid web terminal (the `>_` icon top right):
 
 ```sh
-cd /mnt/user/appdata/atvbridge/src
-docker build -t atvbridge .
 docker run -d --name atvbridge \
   --network host \
   --restart unless-stopped \
-  -v /mnt/user/appdata/atvbridge/data:/data \
-  atvbridge
+  -v /mnt/user/appdata/atvbridge:/data \
+  ghcr.io/OWNER/atvbridge:latest
 docker logs -f atvbridge     # Ctrl+C to stop following
 ```
 
-You should see `Connected to Apple TV Chomusuke` and `Advertising 'Chomusuke' on <unraid-ip>`.
-It then shows up in Unraid's Docker tab like any other container.
+It shows up in Unraid's Docker tab; **update** later with `docker pull ghcr.io/OWNER/atvbridge:latest`
+followed by `docker rm -f atvbridge` and the `docker run` above (or Unraid's "check for updates").
+Or use `bridge/docker-compose.yml` with the Compose Manager plugin.
 
-*Using the Compose Manager plugin instead?* Create a stack and paste
-`bridge/docker-compose.yml`, changing the volume to `/mnt/user/appdata/atvbridge/data:/data`.
+**Keep your existing pairings** (optional): before the first start, copy `bridge/data/config.json`
+and `bridge/data/server_key.pem` from this project into `/mnt/user/appdata/atvbridge/`. Otherwise
+pair the Apple TV in the dashboard's setup wizard.
 
-**Updating later:** copy the new `bridge/` files over `src/`, then
-`docker rm -f atvbridge`, then run the `docker build` and `docker run` commands above again.
+### b. Check it
 
-### b2. Optional: real Siri for the mic button
+Open `http://<unraid-ip>:8090`: Apple TV status and what's playing. The logs should show
+`Connected to Apple TV`, `Advertising '<name>' on <unraid-ip>` and the Siri remote starting.
 
-The Google TV remote's mic button can talk to **Siri on the Apple TV** (Siri pops up and hears
-you live, like with the Siri Remote). This uses a second container,
-[appletv-siri-voice](https://github.com/marcusadolfsson/appletv-siri-voice) (third-party, not
-affiliated with Apple), that the Apple TV sees as a HomeKit "Voice Remote".
+### c. Siri for the mic button (once)
 
-```sh
-docker run -d --name appletv-siri-voice \
-  --network host \
-  --restart unless-stopped \
-  -v /mnt/user/appdata/atvbridge/siri:/data/persist \
-  -e HAP_NAME="Chomusuke Voice Remote" \
-  ghcr.io/marcusadolfsson/appletv-siri-voice:latest
-docker logs appletv-siri-voice      # shows the HomeKit setup code
-```
+On an iPhone/iPad/Mac in the same Apple Home as the Apple TV: **Home app → + → Add Accessory →
+More options… → Voice Remote**, setup code **031-45-154** (also on the dashboard). After that the
+Google TV remote's mic button talks to real Siri on the Apple TV; until then (or if Siri is
+unavailable) the bridge recognizes speech itself (see §2). The Siri remote is
+[appletv-siri-voice](https://github.com/marcusadolfsson/appletv-siri-voice) (Apache-2.0, not
+affiliated with Apple), bundled and supervised by the bridge; its pairing lives in `/data/siri`.
 
-1. On an iPhone/iPad/Mac in the same Apple Home as the Apple TV: **Home app → + → Add Accessory
-   → More options… → Voice Remote**, enter the setup code from the logs. (Only needed once.)
-2. Wait for `target-add` in its logs (the Apple TV registering).
-3. Re-create the bridge container with `-e ATVB_SIRI_URL=http://127.0.0.1:8477` added to its
-   `docker run`.
+### Settings
 
-If Siri isn't reachable the bridge falls back to local speech recognition (below), so the
-mic keeps working either way. Without the Siri container, simply leave `ATVB_SIRI_URL` out.
-
-### b3. Optional: real volume from an LG TV
-
-The Apple TV changes the TV's volume with HDMI-CEC/IR presses and can't read the level, so by
-default the phone gets volume up/down only. An LG webOS TV reports the real level of its own
-speakers and pushes changes live, so with it the phone gets a real slider that follows the LG remote
-too. **Not with a soundbar on HDMI ARC** (tested): the TV keeps its own counter that follows only
-presses that go *through the TV* (LG remote, this bridge). The Siri Remote sends CEC volume straight
-to the soundbar, so the counter drifts and the level would be wrong; leave this off unless the Apple
-TV's volume control is set to the TV via IR. Add `-e ATVB_LG_HOST=<tv-ip>` and accept the prompt on the TV the
-first time (or copy `data/lg.json` from an earlier setup).
-
-### c. Check it
-
-Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's playing.
-
-**Environment variables** (add `-e NAME=value` to `docker run`):
+`-e NAME=value` on `docker run`:
 
 | Variable | Default | Use |
 |---|---|---|
-| `ATVB_HOST_IP` | auto | IP advertised over mDNS. Set this if Unraid has several interfaces/bridges and the logs show the wrong IP. |
-| `ATVB_WEB_PORT` | 8090 | Dashboard + companion WebSocket port. |
-| `ATVB_LOG_LEVEL` | INFO | `DEBUG` logs every key press and pairing message. |
-| `ATVB_LG_HOST` | (unset) | LG webOS TV IP for real volume (see below). Saved with its pairing key in `data/lg.json`. |
-| `ATVB_SIRI_URL` | (unset) | Siri container's control API, e.g. `http://127.0.0.1:8477` (§1 b2). |
-| `ATVB_WHISPER_MODEL` | base.en | Local speech model (downloaded once to `/data/models`, ~140 MB). `small.en` is more accurate but slower. |
+| `ATVB_HOST_IP` | auto | IP advertised over mDNS. Set it if the logs show the wrong IP (several interfaces/bridges). |
+| `ATVB_WEB_PORT` | 8090 | Dashboard + companion app port. |
+| `ATVB_SIRI` | auto | `0` turns the bundled Siri voice remote off. |
+| `ATVB_SIRI_PINCODE` | 031-45-154 | HomeKit setup code of the Siri remote. |
+| `ATVB_SIRI_URL` | bundled | Use a separately run appletv-siri-voice instead. |
+| `ATVB_WHISPER_MODEL` | base.en | Local speech fallback (downloaded once to `/data/models`, ~140 MB). `small.en` is more accurate, slower. |
+| `ATVB_ONLINE_ARTWORK` | 1 | `0` = no YouTube/App Store artwork lookups. |
+| `ATVB_LG_HOST` | (unset) | LG webOS TV for real volume; see below. |
+| `ATVB_LOG_LEVEL` | INFO | `DEBUG` logs key presses and protocol messages. |
+
+**LG TV volume:** the Apple TV changes volume with HDMI-CEC presses and can't read the level, so
+phones get volume up/down only. An LG webOS TV reports the real level of its *own speakers*, live.
+**Not with a soundbar on HDMI ARC** (tested): the TV's counter only follows presses that go through
+the TV, while the Siri Remote sends CEC volume straight to the soundbar, so it drifts. Leave it off
+in that setup.
 
 ---
 
@@ -148,8 +119,9 @@ The dashboard shows what was heard and what it did.
 
 ## 3. Install the companion app (media card)
 
-The APK is built from `android/` (see below). Copy `ATVBridge.apk` to the phone and open it
-(allow "install unknown apps" for your file manager when asked).
+On the phone, open the dashboard (`http://<unraid-ip>:8090`) → **Get the Android app**, then open
+the downloaded file (allow your browser to install apps when asked). Tagged releases also have
+the APK attached on GitHub.
 
 1. Open **ATV Bridge**. It searches the network and fills in the bridge address,
    or you can type it, e.g. `192.168.0.10:8090`.
@@ -162,10 +134,17 @@ play/pause, next/previous and ±10 s. The phone's volume buttons control the App
 
 ### Building the APK
 
+CI builds it (`.github/workflows/build.yml`) and puts it into the Docker image. Locally:
+
 ```sh
 cd android
 ./gradlew assembleRelease        # → app/build/outputs/apk/release/app-release.apk
 ```
+
+**Signing:** CI signs with the keystore in the repo secrets `ANDROID_KEYSTORE_BASE64`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Use the same key as your
+installed app so new versions install as updates (local builds use `~/.android/debug.keystore`:
+password `android`, alias `androiddebugkey`).
 
 Needs JDK 17+ and the Android SDK (`local.properties` → `sdk.dir=...`).
 On this ARM Googlebook VM, Google's x86-only `aapt2` runs through `box64`

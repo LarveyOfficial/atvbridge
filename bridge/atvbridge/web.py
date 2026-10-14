@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
+# Companion app, put in the image by CI (.github/workflows/build.yml).
+APK = STATIC / "ATVBridge.apk"
 
 MEDIA_COMMANDS = {"play_pause", "play", "pause", "stop", "next", "previous",
                   "skip_forward", "skip_backward", "seek", "set_volume", "volume_up", "mute",
@@ -38,6 +40,7 @@ class Web:
         self.pending_creds: dict[str, Any] = {}
         self._runner: web.AppRunner | None = None
         self.voice: Any = None  # VoiceAssistant, set by __main__
+        self.siri_host: Any = None  # SiriHost, set by __main__
         self.app = web.Application()
         r = self.app.router
         r.add_get("/", self.index)
@@ -49,6 +52,8 @@ class Web:
         r.add_delete("/api/phones/{fp}", self.delete_phone)
         r.add_post("/api/command", self.command)
         r.add_get("/api/artwork", self.artwork)
+        r.add_get("/api/siri", self.siri_state)
+        r.add_get("/ATVBridge.apk", self.apk)
         r.add_get("/ws", self.ws)
         appletv.on_change(lambda _s: self.broadcast())
         gtv.on_change = self.broadcast
@@ -90,6 +95,8 @@ class Web:
             ],
             "remotes_connected": len(self.gtv.sessions),
             "voice": self.voice.last if self.voice else None,
+            "siri": self.siri_info(),
+            "app_download": APK.exists(),
             # Lets clients interpolate now_playing.position without trusting their own clock.
             "server_time": time.time(),
         }
@@ -200,6 +207,29 @@ class Web:
         except Exception as exc:  # noqa: BLE001
             LOG.warning("Command %s failed: %s", cmd, exc)
             return {"error": str(exc)}
+
+    def siri_info(self) -> dict[str, Any]:
+        host, relay = self.siri_host, self.voice.siri if self.voice else None
+        return {
+            "enabled": bool(relay and relay.enabled),
+            "bundled": bool(host and host.enabled),
+            "running": bool(host and host.running),
+            "pincode": host.pincode if host and host.enabled else None,
+        }
+
+    async def siri_state(self, request: web.Request) -> web.Response:
+        """The Siri voice remote's pairing / data stream status (its /state)."""
+        relay = self.voice.siri if self.voice else None
+        state = await relay.state() if relay else None
+        return web.json_response({**self.siri_info(), "state": state})
+
+    async def apk(self, request: web.Request) -> web.StreamResponse:
+        if not APK.exists():
+            raise web.HTTPNotFound(text="The Android app isn't bundled in this build")
+        return web.FileResponse(APK, headers={
+            "Content-Type": "application/vnd.android.package-archive",
+            "Content-Disposition": 'attachment; filename="ATVBridge.apk"',
+        })
 
     async def artwork(self, request: web.Request) -> web.Response:
         art = self.appletv.artwork
