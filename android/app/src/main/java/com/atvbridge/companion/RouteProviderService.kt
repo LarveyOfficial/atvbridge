@@ -39,7 +39,7 @@ class RouteProviderService : MediaRoute2ProviderService() {
         MediaRoute2Info.Builder(ROUTE_ID, deviceName)
             .addFeature(FEATURE)
             .addFeature(MediaRoute2Info.FEATURE_REMOTE_PLAYBACK)
-            .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
+            .setVolumeHandling(volumeHandling())
             .setVolumeMax(VOLUME_MAX)
             .setVolume(volume)
             .setConnectionState(MediaRoute2Info.CONNECTION_STATE_CONNECTED)
@@ -50,7 +50,7 @@ class RouteProviderService : MediaRoute2ProviderService() {
         RoutingSessionInfo.Builder(SESSION_ID, owner)
             .addSelectedRoute(ROUTE_ID)
             .setName(deviceName)
-            .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
+            .setVolumeHandling(volumeHandling())
             .setVolumeMax(VOLUME_MAX)
             .setVolume(volume)
             .build()
@@ -69,13 +69,16 @@ class RouteProviderService : MediaRoute2ProviderService() {
         notifySessionReleased(sessionId)
     }
 
-    // The output switcher's volume slider; BridgeService turns it into volume steps.
+    // The output switcher's volume slider only exists when the Apple TV reports a real level.
     override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) = setFromSlider(volume)
     override fun onSetSessionVolume(requestId: Long, sessionId: String, volume: Int) = setFromSlider(volume)
 
     private fun setFromSlider(volume: Int) {
-        onVolumeSet?.invoke(volume.coerceIn(0, VOLUME_MAX))
+        if (variableVolume) onVolumeSet?.invoke(volume.coerceIn(0, VOLUME_MAX))
     }
+
+    private fun volumeHandling() =
+        if (variableVolume) MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE else MediaRoute2Info.PLAYBACK_VOLUME_FIXED
 
     override fun onSelectRoute(requestId: Long, sessionId: String, routeId: String) {}
     override fun onDeselectRoute(requestId: Long, sessionId: String, routeId: String) {}
@@ -91,14 +94,21 @@ class RouteProviderService : MediaRoute2ProviderService() {
         private var instance: RouteProviderService? = null
         private var sessionOwner: String? = null
         private var deviceName = "Apple TV"
-        private var volume = 50
+        private var variableVolume = false
+        private var volume = 0
 
-        /** Set by BridgeService: the output switcher volume slider moved to this level. */
+        /** Set by BridgeService: the output switcher slider moved (only with a real level). */
         var onVolumeSet: ((Int) -> Unit)? = null
 
-        fun setVolume(level: Int) {
-            if (level == volume) return
-            volume = level
+        /**
+         * A real, settable level shows a slider in the output switcher. Without one (Apple TV
+         * stepping the TV's volume over HDMI-CEC) there is no slider: the level would be a guess.
+         */
+        fun setVolume(level: Int?) {
+            val variable = level != null
+            if (variable == variableVolume && (level ?: 0) == volume) return
+            variableVolume = variable
+            volume = level ?: 0
             instance?.publish()
         }
 

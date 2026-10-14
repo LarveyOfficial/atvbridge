@@ -26,11 +26,6 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("volume_keys", true)
         set(value) = sp.edit().putBoolean("volume_keys", value).apply()
 
-    /** Estimated TV volume (0-100) when the Apple TV can only step volume up/down. */
-    var volumeEstimate: Int
-        get() = sp.getInt("volume_estimate", 50)
-        set(value) = sp.edit().putInt("volume_estimate", value).apply()
-
     companion object {
         const val DEFAULT_PORT = 8090
         private val EXPLICIT_PORT = Regex("^[a-zA-Z]+://(\\[[^]]+]|[^/:]+):\\d+")
