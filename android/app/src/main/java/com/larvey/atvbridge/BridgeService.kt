@@ -59,7 +59,7 @@ class BridgeService : Service(), BridgeClient.Listener {
         super.onCreate()
         prefs = Prefs(this)
         notifications = getSystemService(NotificationManager::class.java)
-        createChannels()
+        createChannels(this)
         session = MediaSession(this, "ATV Bridge").apply {
             setCallback(sessionCallback)
             setSessionActivity(openAppIntent())
@@ -209,7 +209,7 @@ class BridgeService : Service(), BridgeClient.Listener {
             val text = when {
                 !bridgeConnected || st == null -> getString(R.string.status_connecting)
                 !st.atvConnected -> getString(R.string.status_atv_offline, st.name, st.error ?: "connecting…")
-                st.power == "off" -> getString(R.string.status_asleep, st.name)
+                // Asleep or idle: just say it's connected (no "asleep" notification).
                 else -> getString(R.string.status_idle, st.name)
             }
             notifications.notify(NOTIFICATION_ID, statusNotification(text))
@@ -344,24 +344,6 @@ class BridgeService : Service(), BridgeClient.Listener {
 
     // --- notifications ----------------------------------------------------------------------
 
-    private fun createChannels() {
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_MEDIA, getString(R.string.channel_media), NotificationManager.IMPORTANCE_LOW)
-                .apply { setShowBadge(false) },
-        )
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_STATUS, getString(R.string.channel_status), NotificationManager.IMPORTANCE_MIN)
-                .apply { setShowBadge(false) },
-        )
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_KEYBOARD, getString(R.string.channel_keyboard), NotificationManager.IMPORTANCE_HIGH)
-                .apply {
-                    setShowBadge(false)
-                    setSound(null, null)
-                },
-        )
-    }
-
     private fun statusNotification(text: String): Notification =
         Notification.Builder(this, CHANNEL_STATUS)
             .setSmallIcon(R.drawable.ic_tv)
@@ -475,7 +457,8 @@ class BridgeService : Service(), BridgeClient.Listener {
         private const val KEYBOARD_NOTIFICATION_ID = 2
         private const val CHANNEL_KEYBOARD = "keyboard"
         private const val CHANNEL_MEDIA = "media"
-        private const val CHANNEL_STATUS = "status"
+        /** The ongoing connection notification's channel (users can turn it off). */
+        const val CHANNEL_STATUS = "status"
         private const val ACTION_STOP = "com.larvey.atvbridge.STOP"
         private const val ACTION_COMMAND = "com.larvey.atvbridge.COMMAND"
         private const val ACTION_RECONNECT = "com.larvey.atvbridge.RECONNECT"
@@ -494,6 +477,25 @@ class BridgeService : Service(), BridgeClient.Listener {
         }
 
         val isRunning get() = status != null
+
+        fun createChannels(context: Context) {
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            notifications.createNotificationChannel(
+                NotificationChannel(CHANNEL_MEDIA, context.getString(R.string.channel_media), NotificationManager.IMPORTANCE_LOW)
+                    .apply { setShowBadge(false) },
+            )
+            notifications.createNotificationChannel(
+                NotificationChannel(CHANNEL_STATUS, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_MIN)
+                    .apply { setShowBadge(false) },
+            )
+            notifications.createNotificationChannel(
+                NotificationChannel(CHANNEL_KEYBOARD, context.getString(R.string.channel_keyboard), NotificationManager.IMPORTANCE_HIGH)
+                    .apply {
+                        setShowBadge(false)
+                        setSound(null, null)
+                    },
+            )
+        }
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, BridgeService::class.java))

@@ -29,6 +29,7 @@ LOG = logging.getLogger(__name__)
 
 PROTOCOLS = {"companion": Protocol.Companion, "airplay": Protocol.AirPlay}
 HID_MUTE = (0x0C, 0xE2)  # USB HID consumer page: Mute
+POWER_OVERRIDE_SECONDS = 10
 
 
 class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, KeyboardListener):
@@ -55,6 +56,10 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self.tv: LGTV | None = None
         self._atv_volume_control: str | None = None
         self._ext_art_key: str | None = None
+        # Power we just commanded, trusted over the Apple TV's (lagging) report until the deadline.
+        self._power_override: tuple[str, float] | None = None
+        # (title, artist) showing when the Apple TV went to sleep; hidden until it changes.
+        self._sleep_item: tuple[str | None, str | None] | None = None
         self._ti_text: str | None = None
         self._apps: dict[str, str] = {}
         self._apps_at = 0.0
@@ -160,7 +165,21 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         LOG.debug("Push update error: %s", exception)
 
     def powerstate_update(self, old_state: PowerState, new_state: PowerState) -> None:
-        self._set(power=self._power_str())
+        self._power_override = None  # the Apple TV reported in: trust it again
+        self._set_power("on" if new_state == PowerState.On else "off")
+
+    def _set_power(self, power: str) -> None:
+        """Asleep wins over now-playing: the Apple TV keeps reporting the last item after it
+        goes to sleep (and again after waking), so drop it until something new plays."""
+        if power == "off":
+            playing = self.state.get("now_playing")
+            if playing:
+                self._sleep_item = (playing.get("title"), playing.get("artist"))
+            self._set(power="off", now_playing=None)
+        else:
+            self._set(power=power)
+            if self.atv:
+                self.loop.create_task(self._refresh_now_playing())
 
     def volume_update(self, old_level: float, new_level: float) -> None:
         if self._atv_volume_control == "absolute" and not (self.tv and self.tv.available):
@@ -228,6 +247,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         return None
 
     def _power_str(self) -> str:
+        if self._power_override and time.monotonic() < self._power_override[1]:
+            return self._power_override[0]
         try:
             return "on" if self.atv and self.atv.power.power_state == PowerState.On else "off"
         except Exception:  # noqa: BLE001
@@ -259,6 +280,15 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 "artwork_id": None,
             }
             active = state not in (None, DeviceState.Idle, DeviceState.Stopped)
+            power = self._power_str()
+            if power == "off":
+                active = False
+            elif self._sleep_item:
+                # Stale item from before sleeping: hide it until it plays or something else does.
+                if (playing.title, playing.artist) == self._sleep_item and state != DeviceState.Playing:
+                    active = False
+                else:
+                    self._sleep_item = None
             art_id = self.atv.metadata.artwork_id
             if art_id:
                 self._ext_art_key = None
@@ -276,7 +306,7 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                         self.loop.create_task(self._lookup_artwork(key, (app or {}).get("id") or "",
                                                                    playing.title, playing.artist))
             now_playing["artwork_id"] = self._artwork_id
-            self._set(now_playing=now_playing if active else None, app=app, power=self._power_str())
+            self._set(now_playing=now_playing if active else None, app=app, power=power)
         except Exception as exc:  # noqa: BLE001
             LOG.debug("Failed to refresh now playing: %s", exc)
 
@@ -396,15 +426,15 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             await self._mrp_hid(*HID_MUTE)
         elif name == "set_volume":
             await self.atv.audio.set_volume(float(kwargs["level"]))
-        elif name == "power_on":
-            await self.atv.power.turn_on()
-        elif name == "power_off":
-            await self.atv.power.turn_off()
-        elif name == "power_toggle":
-            if self.atv.power.power_state == PowerState.On:
-                await self.atv.power.turn_off()
-            else:
+        elif name in ("power_on", "power_off", "power_toggle"):
+            on = name == "power_on" or (name == "power_toggle" and self.atv.power.power_state != PowerState.On)
+            if on:
                 await self.atv.power.turn_on()
+            else:
+                await self.atv.power.turn_off()
+            # Don't wait for the Apple TV to report it (it can take a while, or not happen).
+            self._power_override = ("on" if on else "off", time.monotonic() + POWER_OVERRIDE_SECONDS)
+            self._set_power(self._power_override[0])
         elif name == "type_text":
             await self.type_text(kwargs["text"])
         elif name == "text_set":

@@ -84,6 +84,16 @@ class MainActivity : Activity() {
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+        // Android requires an ongoing notification to stay connected in the background; its
+        // channel can be switched off without stopping the connection.
+        findViewById<Button>(R.id.hide_status).setOnClickListener {
+            BridgeService.createChannels(this)
+            startActivity(
+                Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, BridgeService.CHANNEL_STATUS),
+            )
+        }
         battery.setOnClickListener {
             @SuppressLint("BatteryLife")
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))

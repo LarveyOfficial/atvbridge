@@ -89,6 +89,13 @@
             android:text="@string/start_on_boot" />
 
         <Button
+            android:id="@+id/hide_status"
+            style="@android:style/Widget.Material.Button.Borderless.Colored"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/hide_status" />
+
+        <Button
             android:id="@+id/battery"
             style="@android:style/Widget.Material.Button.Borderless.Colored"
             android:layout_width="wrap_content"
