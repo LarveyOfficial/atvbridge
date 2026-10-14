@@ -58,7 +58,8 @@ class LGTV:
 
         delay = 5
         while True:
-            client = WebOsClient(self.host, client_key=self._key, connect_timeout=10)
+            # First connection waits for the "allow" prompt on the TV to be accepted.
+            client = WebOsClient(self.host, client_key=self._key, connect_timeout=10 if self._key else 60)
             try:
                 await client.connect()
                 if client.client_key != self._key:
@@ -89,6 +90,8 @@ class LGTV:
         muted = bool(tv_state.muted)
         connected = bool(tv_state.is_on) and volume is not None
         if (volume, muted, connected) != (self.volume, self.muted, self.connected):
+            LOG.info("LG TV reports volume %s%s (output %s)", volume, " muted" if muted else "",
+                     tv_state.sound_output)
             self.volume, self.muted, self.connected = volume, muted, connected
             self.on_change()
 
