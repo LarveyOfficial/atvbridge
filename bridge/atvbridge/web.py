@@ -23,7 +23,7 @@ LOG = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
 MEDIA_COMMANDS = {"play_pause", "play", "pause", "stop", "next", "previous",
-                  "skip_forward", "skip_backward", "seek", "set_volume", "volume_up",
+                  "skip_forward", "skip_backward", "seek", "set_volume", "volume_up", "mute",
                   "volume_down", "power_on", "power_off", "power_toggle",
                   "up", "down", "left", "right", "select", "menu", "home", "launch"}
 

@@ -126,6 +126,8 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.remote.current_app, "com.google.ios.youtube")
         self.assertEqual(self.remote.volume_info["level"], 42)
         self.assertEqual(self.remote.device_info["manufacturer"], "Apple")
+        # Google's app only sends volume keys to a TV that identifies like its remote service.
+        self.assertEqual(self.remote.device_info["sw_version"], "6.1.683155326")
 
         self.remote.send_key_command("DPAD_UP")
         self.assertEqual(await self.atv.next_command(), ("up", {}))
@@ -137,6 +139,8 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.atv.next_command(), ("select", {"hold": True}))
         self.remote.send_key_command("VOLUME_DOWN")
         self.assertEqual(await self.atv.next_command(), ("volume_down", {}))
+        self.remote.send_key_command("MUTE")
+        self.assertEqual(await self.atv.next_command(), ("mute", {}))
         self.remote.send_text("hello")
         self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "hello"}))
         self.remote.send_launch_app_command("https://www.youtube.com")

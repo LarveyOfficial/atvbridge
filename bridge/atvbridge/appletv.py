@@ -24,6 +24,7 @@ from .store import Store
 LOG = logging.getLogger(__name__)
 
 PROTOCOLS = {"companion": Protocol.Companion, "airplay": Protocol.AirPlay}
+HID_MUTE = (0x0C, 0xE2)  # USB HID consumer page: Mute
 
 
 class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, KeyboardListener):
@@ -222,6 +223,19 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         except Exception as exc:  # noqa: BLE001
             LOG.debug("Failed to refresh now playing: %s", exc)
 
+    async def _mrp_hid(self, usage_page: int, usage: int) -> None:
+        """Press a HID key over MRP. pyatv only exposes a fixed set of keys (no mute), so this
+        reaches into its MRP remote control; fails cleanly if pyatv's internals change."""
+        from pyatv.protocols.mrp import messages
+
+        assert self.atv is not None
+        mrp = getattr(self.atv.remote_control, "_interfaces", {}).get(Protocol.MRP)
+        protocol = getattr(mrp, "protocol", None)
+        if protocol is None:
+            raise NotImplementedError("MRP HID keys are not available")
+        await protocol.send(messages.send_hid_event(usage_page, usage, True))
+        await protocol.send(messages.send_hid_event(usage_page, usage, False))
+
     # --- commands -------------------------------------------------------------------
     async def command(self, name: str, hold: bool = False, **kwargs: Any) -> None:
         if not self.atv:
@@ -245,6 +259,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             await self.atv.audio.volume_up()
         elif name == "volume_down":
             await self.atv.audio.volume_down()
+        elif name == "mute":
+            await self._mrp_hid(*HID_MUTE)
         elif name == "set_volume":
             await self.atv.audio.set_volume(float(kwargs["level"]))
         elif name == "power_on":

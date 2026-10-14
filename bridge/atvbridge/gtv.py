@@ -32,8 +32,8 @@ LOG = logging.getLogger(__name__)
 PAIRING_PORT = int(os.environ.get("ATVB_PAIRING_PORT", 6467))
 REMOTE_PORT = int(os.environ.get("ATVB_REMOTE_PORT", 6466))
 
-# PING | KEY | IME | POWER | VOLUME | APP_LINK
-SERVER_FEATURES = 1 | 2 | 4 | 32 | 64 | 512
+# PING | KEY | IME | VOICE | POWER | VOLUME | APP_LINK (623, as a real Google TV announces).
+SERVER_FEATURES = 1 | 2 | 4 | 8 | 32 | 64 | 512
 
 # Android key code name -> Apple TV command
 KEY_MAP = {
@@ -61,6 +61,8 @@ KEY_MAP = {
     "KEYCODE_MEDIA_REWIND": "skip_backward",
     "KEYCODE_VOLUME_UP": "volume_up",
     "KEYCODE_VOLUME_DOWN": "volume_down",
+    "KEYCODE_VOLUME_MUTE": "mute",
+    "KEYCODE_MUTE": "mute",
     "KEYCODE_POWER": "power_toggle",
     "KEYCODE_TV_POWER": "power_toggle",
     "KEYCODE_SLEEP": "power_off",
@@ -358,10 +360,12 @@ class RemoteSession(TLSConnection):
         info = msg.remote_configure.device_info
         info.model = "Apple TV"
         info.vendor = "Apple"
+        # Identify as Google's own remote service (values from a real Google TV), in case
+        # the phone app gates features on it.
         info.unknown1 = 1
-        info.unknown2 = "1"
-        info.package_name = "androidtv-remote"
-        info.app_version = "5.2.0"
+        info.unknown2 = "14"  # Android version
+        info.package_name = "com.google.android.tv.remote.service"
+        info.app_version = "6.1.683155326"
         self.send(msg)
         self._ping_task = asyncio.get_event_loop().create_task(self._pinger())
         self.server.on_change()
@@ -510,6 +514,10 @@ class RemoteSession(TLSConnection):
             return
         msg = RemoteMessage()
         v = msg.remote_set_volume_level
+        # Meaning of unknown1/2/4/5 is undocumented; 1s plus a level is what the Google TV
+        # app was seen accepting (its volume buttons only send keys after a real-TV-like
+        # remote_configure, see on_ready).
+        v.unknown1 = v.unknown2 = v.unknown4 = v.unknown5 = 1
         v.player_model = self.server.store.display_name()
         v.volume_max = 100
         v.volume_level = int(vol)
