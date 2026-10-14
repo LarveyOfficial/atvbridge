@@ -1,0 +1,30 @@
+# ATV Bridge on Unraid (Docker Compose Manager plugin: Docker tab -> Compose -> Add New Stack,
+# paste this file, then "Compose Up").
+#
+# One container: Google TV remote bridge for the Apple TV, dashboard (http://<unraid-ip>:8090,
+# also serves the Android app) and the Siri voice remote (pair once in the Home app:
+# Add Accessory -> More options -> Voice Remote, code 031-45-154).
+
+services:
+  atvbridge:
+    image: ghcr.io/larveyofficial/atvbridge:latest
+    container_name: atvbridge
+    # Required: phones (Google TV remote) and the Apple TV (Siri remote) find it over mDNS
+    # and connect straight to ports 8090, 6466, 6467 and 47129.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # Pairings (Apple TV, phones, Siri remote), settings, speech model cache.
+      - /mnt/user/appdata/atvbridge:/data
+    environment:
+      - TZ=Etc/UTC                        # your timezone, e.g. Europe/Amsterdam (log timestamps)
+      # - ATVB_HOST_IP=192.168.0.10       # set if the logs advertise the wrong IP (several NICs/bridges)
+      # - ATVB_SIRI=0                     # turn the bundled Siri voice remote off
+      # - ATVB_SIRI_PINCODE=031-45-154    # HomeKit setup code of the Siri remote
+      # - ATVB_WHISPER_MODEL=base.en      # local speech fallback (small.en: more accurate, slower)
+      # - ATVB_ONLINE_ARTWORK=0           # no YouTube/App Store artwork lookups
+      # - ATVB_LOG_LEVEL=DEBUG
+    labels:
+      # Unraid Docker tab: "WebUI" menu entry.
+      net.unraid.docker.webui: "http://[IP]:[PORT:8090]/"
+      net.unraid.docker.managed: "composeman"

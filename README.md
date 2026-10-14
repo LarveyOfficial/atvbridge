@@ -20,7 +20,8 @@ phone's lock screen and Quick Settings.
 | `bridge/`  | Python service (pyatv + Android TV Remote v2 server + web dashboard). Runs in Docker. |
 | `android/` | Companion app: shows the media card, routes play/pause/seek/volume back to the bridge. |
 
-See `HANDOFF.md` for protocol details (including the "000000" pairing trick).
+Protocol notes live in the code: `bridge/atvbridge/certs.py` (the "000000" pairing trick),
+`gtv.py` (Google TV remote server), `ime.py` (keyboard), `rti.py` (Apple TV typing).
 
 ---
 
@@ -48,7 +49,8 @@ docker logs -f atvbridge     # Ctrl+C to stop following
 
 It shows up in Unraid's Docker tab; **update** later with `docker pull ghcr.io/larveyofficial/atvbridge:latest`
 followed by `docker rm -f atvbridge` and the `docker run` above (or Unraid's "check for updates").
-Or use `bridge/docker-compose.yml` with the Compose Manager plugin.
+**Prefer compose?** With the Docker Compose Manager plugin: Docker tab → Compose → Add New Stack,
+paste [`unraid.yml`](unraid.yml), Compose Up.
 
 **Keep your existing pairings** (optional): before the first start, copy `bridge/data/config.json`
 and `bridge/data/server_key.pem` from this project into `/mnt/user/appdata/atvbridge/`. Otherwise
