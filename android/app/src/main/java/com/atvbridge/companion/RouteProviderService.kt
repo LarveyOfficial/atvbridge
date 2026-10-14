@@ -41,7 +41,7 @@ class RouteProviderService : MediaRoute2ProviderService() {
             .addFeature(MediaRoute2Info.FEATURE_REMOTE_PLAYBACK)
             .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
             .setVolumeMax(VOLUME_MAX)
-            .setVolume(VOLUME_MID)
+            .setVolume(volume)
             .setConnectionState(MediaRoute2Info.CONNECTION_STATE_CONNECTED)
             .apply { if (Build.VERSION.SDK_INT >= 34) setType(MediaRoute2Info.TYPE_REMOTE_TV) }
             .build()
@@ -52,7 +52,7 @@ class RouteProviderService : MediaRoute2ProviderService() {
             .setName(deviceName)
             .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
             .setVolumeMax(VOLUME_MAX)
-            .setVolume(VOLUME_MID)
+            .setVolume(volume)
             .build()
 
     override fun onCreateSession(requestId: Long, packageName: String, routeId: String, sessionHints: Bundle?) {
@@ -69,14 +69,12 @@ class RouteProviderService : MediaRoute2ProviderService() {
         notifySessionReleased(sessionId)
     }
 
-    // The output switcher's volume slider: the Apple TV can only step, so treat the change
-    // from the middle as steps and snap back.
-    override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) = volumeStep(volume)
-    override fun onSetSessionVolume(requestId: Long, sessionId: String, volume: Int) = volumeStep(volume)
+    // The output switcher's volume slider; BridgeService turns it into volume steps.
+    override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) = setFromSlider(volume)
+    override fun onSetSessionVolume(requestId: Long, sessionId: String, volume: Int) = setFromSlider(volume)
 
-    private fun volumeStep(volume: Int) {
-        onVolumeSteps?.invoke(volume - VOLUME_MID)
-        publish()
+    private fun setFromSlider(volume: Int) {
+        onVolumeSet?.invoke(volume.coerceIn(0, VOLUME_MAX))
     }
 
     override fun onSelectRoute(requestId: Long, sessionId: String, routeId: String) {}
@@ -89,14 +87,20 @@ class RouteProviderService : MediaRoute2ProviderService() {
         /** Routing session id; also the media session VolumeProvider's volumeControlId. */
         const val SESSION_ID = "atvbridge"
         private const val VOLUME_MAX = 100
-        private const val VOLUME_MID = 50
 
         private var instance: RouteProviderService? = null
         private var sessionOwner: String? = null
         private var deviceName = "Apple TV"
+        private var volume = 50
 
-        /** Set by BridgeService: change of the output switcher volume slider, in steps. */
-        var onVolumeSteps: ((Int) -> Unit)? = null
+        /** Set by BridgeService: the output switcher volume slider moved to this level. */
+        var onVolumeSet: ((Int) -> Unit)? = null
+
+        fun setVolume(level: Int) {
+            if (level == volume) return
+            volume = level
+            instance?.publish()
+        }
 
         fun setDeviceName(name: String) {
             if (name == deviceName) return

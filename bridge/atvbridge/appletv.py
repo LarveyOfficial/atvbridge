@@ -28,6 +28,8 @@ LOG = logging.getLogger(__name__)
 
 PROTOCOLS = {"companion": Protocol.Companion, "airplay": Protocol.AirPlay}
 HID_MUTE = (0x0C, 0xE2)  # USB HID consumer page: Mute
+VOLUME_STEP_INTERVAL = 0.08  # pause between queued volume presses (HDMI-CEC is slow)
+MAX_VOLUME_QUEUE = 50
 
 
 class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, KeyboardListener):
@@ -50,6 +52,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         # Text input session for the focused field: (session uuid, text we know is in it).
         self._ti_session: bytes | None = None
         self._finder = ArtworkFinder()
+        self._volume_pending = 0
+        self._volume_task: asyncio.Task | None = None
         self._ext_art_key: str | None = None
         self._ti_text: str | None = None
         self._apps: dict[str, str] = {}
@@ -338,6 +342,25 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         await protocol.send(messages.send_hid_event(usage_page, usage, True))
         await protocol.send(messages.send_hid_event(usage_page, usage, False))
 
+    def volume_steps(self, steps: int) -> None:
+        """Queue relative volume presses (+up / -down). Presses go out one at a time at
+        CEC pace; opposite requests cancel out, so a dragged slider can't run away."""
+        self._volume_pending = max(-MAX_VOLUME_QUEUE, min(MAX_VOLUME_QUEUE, self._volume_pending + steps))
+        if self._volume_task is None or self._volume_task.done():
+            self._volume_task = self.loop.create_task(self._volume_worker())
+
+    async def _volume_worker(self) -> None:
+        while self._volume_pending and self.atv:
+            up = self._volume_pending > 0
+            self._volume_pending += -1 if up else 1
+            try:
+                await (self.atv.audio.volume_up() if up else self.atv.audio.volume_down())
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("Volume step failed: %s", exc)
+                self._volume_pending = 0
+                return
+            await asyncio.sleep(VOLUME_STEP_INTERVAL)
+
     async def _lookup_artwork(self, key: str, app_id: str, title: str | None, artist: str | None) -> None:
         found = await self._finder.find(app_id, title, artist)
         if found is None or key != self._ext_art_key:
@@ -367,6 +390,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             await rc.skip_backward(kwargs.get("seconds", 10))
         elif name == "seek":
             await rc.set_position(int(kwargs["position"]))
+        elif name == "volume_steps":
+            self.volume_steps(int(kwargs["steps"]))
         elif name == "volume_up":
             await self.atv.audio.volume_up()
         elif name == "volume_down":

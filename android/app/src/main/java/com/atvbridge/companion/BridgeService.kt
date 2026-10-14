@@ -10,7 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.Icon
-import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.MediaRoute2Info
 import android.media.MediaRouter2
@@ -43,6 +42,7 @@ class BridgeService : Service(), BridgeClient.Listener {
     private var artworkId: String? = null
     private var artwork: Bitmap? = null
     private var volumeProvider: VolumeProvider? = null
+    private var relativeVolume = true
     private var router: Any? = null  // MediaRouter2 (API 30+)
     private var routeCallback: Any? = null
 
@@ -82,9 +82,8 @@ class BridgeService : Service(), BridgeClient.Listener {
         }
         connect(url)
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
-        RouteProviderService.onVolumeSteps = { steps ->
-            repeat(minOf(kotlin.math.abs(steps), 5)) { command(if (steps > 0) "volume_up" else "volume_down") }
-        }
+        RouteProviderService.onVolumeSet = { level -> setVolume(level) }
+        if (Build.VERSION.SDK_INT >= 30) RouteProviderService.setVolume(prefs.volumeEstimate)
         if (Build.VERSION.SDK_INT >= 30) startRouting()
     }
 
@@ -159,7 +158,7 @@ class BridgeService : Service(), BridgeClient.Listener {
 
     override fun onDestroy() {
         if (Build.VERSION.SDK_INT >= 30) stopRouting()
-        RouteProviderService.onVolumeSteps = null
+        RouteProviderService.onVolumeSet = null
         client?.close()
         client = null
         runCatching {
@@ -263,36 +262,48 @@ class BridgeService : Service(), BridgeClient.Listener {
     }
 
     private fun updateVolume(st: BridgeState) {
-        // Always a remote session, so Android attributes playback to the Apple TV. Apple TVs
-        // driving the TV over HDMI-CEC/IR can only step volume (relative); the level shown is
-        // a placeholder. With volume keys turned off the volume is fixed.
+        // Always a remote session, so Android attributes playback to the Apple TV.
+        // "absolute": the Apple TV reports and sets a real level. "relative" (Apple TV driving
+        // the TV over HDMI-CEC/IR, the common case): there is no level to read, so sliders and
+        // keys move an estimate and the difference is sent as up/down presses. With volume
+        // keys turned off, or no volume control at all, the volume is fixed.
+        relativeVolume = st.volumeControl == "relative" || (st.volumeControl == "absolute" && st.volume == null)
         val mode = when {
-            !prefs.volumeKeys -> VolumeProvider.VOLUME_CONTROL_FIXED
-            st.volumeControl == "absolute" && st.volume != null -> VolumeProvider.VOLUME_CONTROL_ABSOLUTE
-            st.volumeControl == "relative" || st.volumeControl == "absolute" -> VolumeProvider.VOLUME_CONTROL_RELATIVE
-            else -> VolumeProvider.VOLUME_CONTROL_FIXED
+            !prefs.volumeKeys || st.volumeControl == null -> VolumeProvider.VOLUME_CONTROL_FIXED
+            else -> VolumeProvider.VOLUME_CONTROL_ABSOLUTE
         }
+        val level = if (relativeVolume) prefs.volumeEstimate else st.volume ?: prefs.volumeEstimate
         val provider = volumeProvider?.takeIf { it.volumeControl == mode }
-            ?: newVolumeProvider(mode, st.volume ?: 50).also {
+            ?: newVolumeProvider(mode, level).also {
                 volumeProvider = it
                 session.setPlaybackToRemote(it)
             }
-        if (mode == VolumeProvider.VOLUME_CONTROL_ABSOLUTE && st.volume != null && provider.currentVolume != st.volume) {
-            provider.currentVolume = st.volume
+        if (provider.currentVolume != level) provider.currentVolume = level
+        if (Build.VERSION.SDK_INT >= 30) RouteProviderService.setVolume(level)
+    }
+
+    /** Move the volume to `level` (0-100) from any slider or key. */
+    private fun setVolume(level: Int) {
+        val target = level.coerceIn(0, 100)
+        if (relativeVolume) {
+            val steps = target - prefs.volumeEstimate
+            if (steps == 0) return
+            prefs.volumeEstimate = target
+            command("volume_steps", "steps" to steps)
+        } else {
+            command("set_volume", "level" to target)
         }
+        volumeProvider?.let { if (it.volumeControl == VolumeProvider.VOLUME_CONTROL_ABSOLUTE) it.currentVolume = target }
+        if (Build.VERSION.SDK_INT >= 30) RouteProviderService.setVolume(target)
     }
 
     private fun newVolumeProvider(mode: Int, current: Int): VolumeProvider {
         val callbacks = object {
-            fun set(provider: VolumeProvider, volume: Int) {
-                provider.currentVolume = volume.coerceIn(0, 100)
-                command("set_volume", "level" to provider.currentVolume)
-            }
+            fun set(volume: Int) = setVolume(volume)
 
-            fun adjust(direction: Int) {
+            fun adjust(current: Int, direction: Int) {
                 when (direction) {
-                    1 -> command("volume_up")
-                    -1 -> command("volume_down")
+                    1, -1 -> setVolume(current + direction)  // AudioManager.ADJUST_RAISE / LOWER
                     101 -> command("mute")  // AudioManager.ADJUST_TOGGLE_MUTE
                 }
             }
@@ -300,13 +311,13 @@ class BridgeService : Service(), BridgeClient.Listener {
         // The id ties this session to RouteProviderService's routing session (Android 11+).
         return if (Build.VERSION.SDK_INT >= 30) {
             object : VolumeProvider(mode, 100, current, RouteProviderService.SESSION_ID) {
-                override fun onSetVolumeTo(volume: Int) = callbacks.set(this, volume)
-                override fun onAdjustVolume(direction: Int) = callbacks.adjust(direction)
+                override fun onSetVolumeTo(volume: Int) = callbacks.set(volume)
+                override fun onAdjustVolume(direction: Int) = callbacks.adjust(currentVolume, direction)
             }
         } else {
             object : VolumeProvider(mode, 100, current) {
-                override fun onSetVolumeTo(volume: Int) = callbacks.set(this, volume)
-                override fun onAdjustVolume(direction: Int) = callbacks.adjust(direction)
+                override fun onSetVolumeTo(volume: Int) = callbacks.set(volume)
+                override fun onAdjustVolume(direction: Int) = callbacks.adjust(currentVolume, direction)
             }
         }
     }
