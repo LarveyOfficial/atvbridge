@@ -25,6 +25,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Keeps a WebSocket to the bridge and mirrors the Apple TV's now-playing state into a
@@ -139,6 +140,7 @@ class BridgeService : Service(), BridgeClient.Listener {
         artworkId = null
         artwork = null
         client = BridgeClient(url, this).also { it.start() }
+        session.setSessionActivity(tapIntent())
         update()
     }
 
@@ -372,7 +374,7 @@ class BridgeService : Service(), BridgeClient.Listener {
             .setSmallIcon(R.drawable.ic_tv)
             .setContentTitle(title)
             .setContentText(subtitle)
-            .setContentIntent(openAppIntent())
+            .setContentIntent(tapIntent())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -407,6 +409,25 @@ class BridgeService : Service(), BridgeClient.Listener {
             this, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+    /**
+     * What tapping the media card opens: Google's TV remote, connected to this bridge, when the
+     * Google TV app is installed. Its exported DeviceNotificationActivity is the entry point
+     * Google TVs' own notifications use; "pairing_ip_address" makes it connect to that device.
+     * Without the Google TV app, this app opens instead.
+     */
+    private fun tapIntent(): PendingIntent {
+        val host = prefs.bridgeUrl?.toHttpUrlOrNull()?.host
+        val remote = Intent(GOOGLE_TV_REMOTE_ACTION)
+            .setPackage(GOOGLE_TV_PACKAGE)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra("referrer", packageName)
+            .apply { if (host != null) putExtra("pairing_ip_address", host) }
+        if (remote.resolveActivity(packageManager) == null) return openAppIntent()
+        return PendingIntent.getActivity(
+            this, 1, remote, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     private fun openAppIntent(): PendingIntent =
         PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
@@ -414,6 +435,8 @@ class BridgeService : Service(), BridgeClient.Listener {
 
     companion object {
         private const val TAG = "BridgeService"
+        private const val GOOGLE_TV_PACKAGE = "com.google.android.videos"
+        private const val GOOGLE_TV_REMOTE_ACTION = "com.google.android.apps.googletv.ACTION_VIRTUAL_REMOTE"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_MEDIA = "media"
         private const val CHANNEL_STATUS = "status"
