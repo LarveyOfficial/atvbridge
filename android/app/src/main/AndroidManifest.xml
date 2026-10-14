@@ -37,6 +37,16 @@
             </intent-filter>
         </activity>
 
+        <!-- Invisible trampoline that opens the Google TV remote (see RemoteLauncherActivity).
+             Not showWhenLocked on purpose, so taps on the lock screen ask to unlock first. -->
+        <activity
+            android:name=".RemoteLauncherActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- connectedDevice (not mediaPlayback) so it may be started at boot on Android 15+. -->
         <service
             android:name=".BridgeService"
