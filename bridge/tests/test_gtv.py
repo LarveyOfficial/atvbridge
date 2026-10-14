@@ -128,15 +128,15 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.remote.device_info["manufacturer"], "Apple")
 
         self.remote.send_key_command("DPAD_UP")
-        self.assertEqual(await self.atv.next_command(), ("up", {"hold": False}))
+        self.assertEqual(await self.atv.next_command(), ("up", {}))
         self.remote.send_key_command("BACK")
-        self.assertEqual(await self.atv.next_command(), ("menu", {"hold": False}))
+        self.assertEqual(await self.atv.next_command(), ("menu", {}))
         self.remote.send_key_command("MEDIA_PLAY_PAUSE")
-        self.assertEqual(await self.atv.next_command(), ("play_pause", {"hold": False}))
+        self.assertEqual(await self.atv.next_command(), ("play_pause", {}))
         self.remote.send_key_command("DPAD_CENTER", "START_LONG")
         self.assertEqual(await self.atv.next_command(), ("select", {"hold": True}))
         self.remote.send_key_command("VOLUME_DOWN")
-        self.assertEqual(await self.atv.next_command(), ("volume_down", {"hold": False}))
+        self.assertEqual(await self.atv.next_command(), ("volume_down", {}))
         self.remote.send_text("hello")
         self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "hello"}))
         self.remote.send_launch_app_command("https://www.youtube.com")
@@ -159,6 +159,85 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         await self.server.start()
         await self.remote.async_connect()
         await wait_for(lambda: len(self.server.sessions) == 1)
+
+    async def test_easy_pairing_when_phone_skips_remote_port(self) -> None:
+        # Google's app goes straight to the pairing port. The first connection is dropped
+        # so that the retry is served a key that makes 000000 valid.
+        from androidtvremote2 import ConnectionClosed
+
+        with self.assertRaises((ConnectionClosed, InvalidAuth, OSError)):
+            await self.remote.async_start_pairing()
+            await self.remote.async_finish_pairing("000000")
+        self.remote.disconnect()
+        await self.remote.async_start_pairing()
+        await self.remote.async_finish_pairing("000000")
+        await wait_for(lambda: len(self.store.phones) == 1)
+
+    async def connected_remote(self) -> None:
+        await self.pair("000000")
+        await self.remote.async_connect()
+        await wait_for(lambda: len(self.server.sessions) == 1)
+
+    async def test_press_and_release_is_one_tap(self) -> None:
+        await self.connected_remote()
+        self.remote.send_key_command("DPAD_RIGHT", "START_LONG")
+        await asyncio.sleep(0.1)
+        self.remote.send_key_command("DPAD_RIGHT", "END_LONG")
+        self.assertEqual(await self.atv.next_command(), ("right", {}))
+        await asyncio.sleep(gtv.HOLD_DELAY + 0.2)
+        self.assertEqual(self.atv.commands, [("right", {})])
+
+    async def test_held_arrow_repeats_until_release(self) -> None:
+        await self.connected_remote()
+        self.remote.send_key_command("DPAD_DOWN", "START_LONG")
+        await asyncio.sleep(gtv.HOLD_DELAY + 4 * gtv.REPEAT_INTERVAL)
+        self.remote.send_key_command("DPAD_DOWN", "END_LONG")
+        await asyncio.sleep(0.1)
+        count = len(self.atv.commands)
+        self.assertGreaterEqual(count, 3)
+        self.assertTrue(all(c == ("down", {}) for c in self.atv.commands))
+        await asyncio.sleep(3 * gtv.REPEAT_INTERVAL)
+        self.assertEqual(len(self.atv.commands), count, "kept repeating after release")
+
+    async def test_held_select_is_long_press(self) -> None:
+        await self.connected_remote()
+        self.remote.send_key_command("DPAD_CENTER", "START_LONG")
+        self.assertEqual(await self.atv.next_command(), ("select", {"hold": True}))
+        self.remote.send_key_command("DPAD_CENTER", "END_LONG")
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.atv.commands, [("select", {"hold": True})])
+
+    async def test_swipe_does_not_click(self) -> None:
+        # Touchpad swipe as the app sends it: select down, direction, select up.
+        await self.connected_remote()
+        self.remote.send_key_command("DPAD_CENTER", "START_LONG")
+        await asyncio.sleep(0.03)
+        self.remote.send_key_command("DPAD_LEFT", "SHORT")
+        await asyncio.sleep(0.05)
+        self.remote.send_key_command("DPAD_CENTER", "END_LONG")
+        self.assertEqual(await self.atv.next_command(), ("left", {}))
+        await asyncio.sleep(gtv.HOLD_DELAY + 0.2)
+        self.assertEqual(self.atv.commands, [("left", {})])
+
+    async def test_options_offer_output_encoding(self) -> None:
+        # Google's remote app (Polo) needs our *output* encodings to match its input
+        # encodings, or it aborts with STATUS_BAD_CONFIGURATION (401).
+        # androidtvremote2 doesn't check this, so inspect the reply directly.
+        from androidtvremote2.polo_pb2 import Options, OuterMessage
+
+        session = gtv.PairingSession(self.server)
+        sent: list[OuterMessage] = []
+        session.send = sent.append  # type: ignore[method-assign]
+        msg = OuterMessage(protocol_version=2, status=OuterMessage.Status.STATUS_OK)
+        enc = msg.options.input_encodings.add()
+        enc.type = Options.Encoding.ENCODING_TYPE_HEXADECIMAL
+        enc.symbol_length = 6
+        msg.options.preferred_role = Options.RoleType.ROLE_TYPE_INPUT
+        session.handle(msg)
+        reply = sent[-1]
+        self.assertEqual(reply.status, OuterMessage.Status.STATUS_OK)
+        self.assertIn((Options.Encoding.ENCODING_TYPE_HEXADECIMAL, 6),
+                      [(e.type, e.symbol_length) for e in reply.options.output_encodings])
 
     async def test_revoked_phone_must_pair_again(self) -> None:
         await self.pair("000000")

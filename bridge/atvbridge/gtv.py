@@ -68,7 +68,26 @@ KEY_MAP = {
     "KEYCODE_CHANNEL_UP": "channel_up",
     "KEYCODE_CHANNEL_DOWN": "channel_down",
 }
-HOLDABLE = {"up", "down", "left", "right", "select", "menu", "home"}
+# Keys the phone sends as press (START_LONG) ... release (END_LONG). A quick press is a
+# tap; holding auto-repeats arrows and long-presses select/menu/home.
+REPEATING = {"up", "down", "left", "right"}
+LONG_PRESSABLE = {"select", "menu", "home"}
+HOLD_DELAY = 0.5        # seconds before a press counts as held
+REPEAT_INTERVAL = 0.15  # arrow auto-repeat rate while held
+MAX_HOLD = 10.0         # stop repeating if the release never arrives
+
+
+class _Press:
+    def __init__(self, cmd: str, timer: asyncio.TimerHandle) -> None:
+        self.cmd = cmd
+        self.timer = timer
+        self.held = False
+        self.repeat: asyncio.Task | None = None
+
+    def cancel(self) -> None:
+        self.timer.cancel()
+        if self.repeat:
+            self.repeat.cancel()
 
 
 def _status_msg(status: int = OuterMessage.Status.STATUS_OK) -> OuterMessage:
@@ -85,6 +104,8 @@ class GoogleTVServer:
         self.identity = ServerIdentity(store.data_dir, self._cert_cn())
         # Client certs seen on the remote port from unpaired phones, by IP.
         self.pending: dict[str, Any] = {}
+        # Fingerprints of phones whose first pairing connection we dropped (see PairingSession).
+        self.bounced: set[str] = set()
         # Current pairing (shown on the dashboard): {"code", "client", "ip", "started"}
         self.active_pairing: dict[str, Any] | None = None
         self.sessions: set[RemoteSession] = set()
@@ -185,6 +206,7 @@ class PairingSession(TLSConnection):
         self.expected_fp: str | None = None
         self.secret: bytes | None = None
         self.client_name = ""
+        self.last_step = "connected"
 
     def select_context(self):  # noqa: ANN201
         self.server_e, self.expected_fp = self.server.exponent_for_pairing(self.peer_ip)
@@ -192,9 +214,18 @@ class PairingSession(TLSConnection):
 
     def on_ready(self) -> None:
         LOG.info("Pairing connection from %s", self.peer_ip)
-        if self.peer_cert is not None:
-            # Remember the cert so a retry from this phone can use the easy code.
-            self.server.pending[self.peer_ip] = self.peer_cert
+        if self.peer_cert is None:
+            return
+        # Remember the cert so a retry from this phone can use the easy code.
+        self.server.pending[self.peer_ip] = self.peer_cert
+        fp = fingerprint(self.peer_cert)
+        if (self.server.store.data.get("easy_pairing", True) and fp != self.expected_fp
+                and fp not in self.server.bounced):
+            # Phones that go straight to the pairing port reach us before we know their cert,
+            # so this connection's key can't make 000000 valid. Drop it once; the retry can.
+            self.server.bounced.add(fp)
+            LOG.info("New phone at %s; closing so its retry gets code %s", self.peer_ip, EASY_CODE)
+            self.close()
 
     def send(self, msg: OuterMessage) -> None:
         self.write(ProtobufFraming.encode(msg.SerializeToString()))
@@ -206,23 +237,34 @@ class PairingSession(TLSConnection):
             self.handle(msg)
 
     def handle(self, msg: OuterMessage) -> None:
+        LOG.debug("Pairing message from %s: %s", self.peer_ip, str(msg).replace("\n", " "))
         if msg.status != OuterMessage.Status.STATUS_OK:
-            LOG.info("Phone %s aborted pairing (status %s)", self.peer_ip, msg.status)
+            LOG.info("Phone %s aborted pairing (status %s, last step: %s)",
+                     self.peer_ip, OuterMessage.Status.Name(msg.status), self.last_step)
             self.close()
             return
         reply = _status_msg()
         if msg.HasField("pairing_request"):
+            self.last_step = "pairing_request"
             self.client_name = msg.pairing_request.client_name
             reply.pairing_request_ack.server_name = self.server.store.display_name()
         elif msg.HasField("options"):
-            enc = reply.options.input_encodings.add()
-            enc.type = Options.Encoding.ENCODING_TYPE_HEXADECIMAL
-            enc.symbol_length = 6
-            reply.options.preferred_role = Options.RoleType.ROLE_TYPE_INPUT
+            self.last_step = "options"
+            # The phone picks a configuration from the intersection of our output encodings
+            # with its input encodings (Polo OptionsMessage.getBestConfiguration), so the
+            # server must offer the code as *output*: we display it, the phone types it.
+            # Input is offered too, for clients that match the other way round.
+            for encodings in (reply.options.output_encodings, reply.options.input_encodings):
+                enc = encodings.add()
+                enc.type = Options.Encoding.ENCODING_TYPE_HEXADECIMAL
+                enc.symbol_length = 6
+            reply.options.preferred_role = Options.RoleType.ROLE_TYPE_OUTPUT
         elif msg.HasField("configuration"):
+            self.last_step = "configuration"
             self._start_code()
             reply.configuration_ack.SetInParent()
         elif msg.HasField("secret"):
+            self.last_step = "secret"
             if self.secret is not None and secrets.compare_digest(msg.secret.secret, self.secret):
                 reply.secret_ack.secret = self.secret
                 self._paired()
@@ -283,6 +325,7 @@ class RemoteSession(TLSConnection):
         self._ping_n = 0
         self._ime_counter = 0
         self._field_counter = 0
+        self._press: _Press | None = None
 
     def select_context(self):  # noqa: ANN201
         return self.server.context_for(self.server.exponent_for_remote(self.peer_ip), self._verify)
@@ -325,6 +368,7 @@ class RemoteSession(TLSConnection):
             self.server.on_change()
         if self._ping_task:
             self._ping_task.cancel()
+        self._cancel_press()
 
     async def _pinger(self) -> None:
         while True:
@@ -349,6 +393,8 @@ class RemoteSession(TLSConnection):
             self.handle(msg)
 
     def handle(self, msg: RemoteMessage) -> None:
+        if not (msg.HasField("remote_ping_request") or msg.HasField("remote_ping_response")):
+            LOG.debug("Remote message from %s: %s", self.peer_ip, str(msg).replace("\n", " "))
         if msg.HasField("remote_configure"):
             reply = RemoteMessage()
             reply.remote_set_active.SetInParent()
@@ -365,7 +411,7 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_key_inject"):
             self._key(msg.remote_key_inject.key_code, msg.remote_key_inject.direction)
         elif msg.HasField("remote_adjust_volume_level"):
-            self._run("volume_up")
+            pass  # carries no direction; volume keys arrive as KEYCODE_VOLUME_* instead
         elif msg.HasField("remote_set_volume_level"):
             self._run("set_volume", level=msg.remote_set_volume_level.volume_level)
         elif msg.HasField("remote_app_link_launch_request"):
@@ -384,9 +430,46 @@ class RemoteSession(TLSConnection):
             LOG.debug("No mapping for %s", name)
             return
         if direction == RemoteDirection.END_LONG:
+            self._release(cmd)
+        elif direction == RemoteDirection.START_LONG and cmd in REPEATING | LONG_PRESSABLE:
+            # A new press while another is down cancels the earlier one. This is how swipes on
+            # the phone's touchpad arrive: select down, then a direction, then select up.
+            self._cancel_press()
+            loop = asyncio.get_event_loop()
+            self._press = _Press(cmd, loop.call_later(HOLD_DELAY, self._held))
+        else:
+            self._cancel_press()
+            self._run(cmd)
+
+    def _held(self) -> None:
+        press = self._press
+        if press is None:
             return
-        hold = direction == RemoteDirection.START_LONG and cmd in HOLDABLE
-        self._run(cmd, hold=hold)
+        press.held = True
+        if press.cmd in REPEATING:
+            press.repeat = asyncio.get_event_loop().create_task(self._repeat(press.cmd))
+        else:
+            self._run(press.cmd, hold=True)
+
+    async def _repeat(self, cmd: str) -> None:
+        deadline = time.monotonic() + MAX_HOLD
+        while time.monotonic() < deadline:
+            self._run(cmd)
+            await asyncio.sleep(REPEAT_INTERVAL)
+
+    def _release(self, cmd: str) -> None:
+        press = self._press
+        if press is None or press.cmd != cmd:
+            return  # e.g. select released after a swipe already cancelled it
+        self._press = None
+        press.cancel()
+        if not press.held:
+            self._run(cmd)
+
+    def _cancel_press(self) -> None:
+        if self._press:
+            self._press.cancel()
+            self._press = None
 
     def _run(self, cmd: str, **kwargs: Any) -> None:
         async def go() -> None:
