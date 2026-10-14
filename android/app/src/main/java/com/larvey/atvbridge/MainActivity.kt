@@ -3,6 +3,7 @@ package com.larvey.atvbridge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -74,6 +75,14 @@ class MainActivity : Activity() {
         findViewById<Switch>(R.id.start_on_boot).apply {
             isChecked = prefs.startOnBoot
             setOnCheckedChangeListener { _, checked -> prefs.startOnBoot = checked }
+        }
+        findViewById<Button>(R.id.licenses).setOnClickListener {
+            val text = assets.open("licenses.txt").bufferedReader().use { it.readText() }
+            AlertDialog.Builder(this)
+                .setTitle(R.string.licenses)
+                .setMessage(text)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
         }
         battery.setOnClickListener {
             @SuppressLint("BatteryLife")

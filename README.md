@@ -183,3 +183,9 @@ Note: the Android Terminal VM is NAT'ed (10.80.90.x), so phones can't reach a br
 - **Artwork**: some apps (YouTube) don't publish artwork to the Apple TV. The bridge then looks up the
   YouTube thumbnail (only when title and channel match) or uses the app's App Store icon. This sends the
   title/channel to YouTube and the app id to Apple; set `ATVB_ONLINE_ARTWORK=0` to turn it off.
+
+## License
+
+GNU General Public License v3.0 or later, see [`LICENSE`](LICENSE). Third-party components and
+attributions (the bundled Siri voice remote is Apache-2.0) are listed in [`NOTICE`](NOTICE).
+Not affiliated with Apple or Google.

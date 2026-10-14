@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 # Companion app copied in by CI for the dashboard download
 atvbridge/static/*.apk
+# Copied in by CI for the image
+/LICENSE
+/NOTICE

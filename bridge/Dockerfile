@@ -39,8 +39,15 @@ COPY --from=siri /opt/siri /opt/siri
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Some dependencies (e.g. miniaudio) have no prebuilt wheel for every architecture; compile
+# those with a toolchain that is removed again in the same layer.
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && pip install -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 COPY atvbridge ./atvbridge
+# Licence + notices (copied into the build context by CI; requirements.txt keeps the glob valid).
+COPY requirements.txt LICENSE* NOTICE* /app/
 
 VOLUME /data
 # 8090 dashboard + companion app, 6466/6467 Google TV remote, 47129 HomeKit (Siri remote).
