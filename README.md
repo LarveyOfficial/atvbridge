@@ -59,8 +59,8 @@ docker logs -f atvbridge     # Ctrl+C to stop following
 
 It shows up in Unraid's Docker tab; **update** later with `docker pull ghcr.io/larveyofficial/atvbridge:latest`
 followed by `docker rm -f atvbridge` and the `docker run` above (or Unraid's "check for updates").
-**Prefer compose?** With the Docker Compose Manager plugin: Docker tab → Compose → Add New Stack,
-paste [`unraid.yml`](unraid.yml), Compose Up.
+Outside Unraid, [`bridge/docker-compose.yml`](bridge/docker-compose.yml) does the same with
+Docker Compose.
 
 **Keep your existing pairings** (optional): before the first start, copy `bridge/data/config.json`
 and `bridge/data/server_key.pem` from this project into `/mnt/user/appdata/atvbridge/`. Otherwise
