@@ -67,6 +67,32 @@ It then shows up in Unraid's Docker tab like any other container.
 **Updating later:** copy the new `bridge/` files over `src/`, then
 `docker rm -f atvbridge`, then run the `docker build` and `docker run` commands above again.
 
+### b2. Optional: real Siri for the mic button
+
+The Google TV remote's mic button can talk to **Siri on the Apple TV** (Siri pops up and hears
+you live, like with the Siri Remote). This uses a second container,
+[appletv-siri-voice](https://github.com/marcusadolfsson/appletv-siri-voice) (third-party, not
+affiliated with Apple), that the Apple TV sees as a HomeKit "Voice Remote".
+
+```sh
+docker run -d --name appletv-siri-voice \
+  --network host \
+  --restart unless-stopped \
+  -v /mnt/user/appdata/atvbridge/siri:/data/persist \
+  -e HAP_NAME="Chomusuke Voice Remote" \
+  ghcr.io/marcusadolfsson/appletv-siri-voice:latest
+docker logs appletv-siri-voice      # shows the HomeKit setup code
+```
+
+1. On an iPhone/iPad/Mac in the same Apple Home as the Apple TV: **Home app → + → Add Accessory
+   → More options… → Voice Remote**, enter the setup code from the logs. (Only needed once.)
+2. Wait for `target-add` in its logs (the Apple TV registering).
+3. Re-create the bridge container with `-e ATVB_SIRI_URL=http://127.0.0.1:8477` added to its
+   `docker run`.
+
+If Siri isn't reachable the bridge falls back to local speech recognition (below), so the
+mic keeps working either way. Without the Siri container, simply leave `ATVB_SIRI_URL` out.
+
 ### c. Check it
 
 Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's playing.
@@ -78,6 +104,8 @@ Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's pl
 | `ATVB_HOST_IP` | auto | IP advertised over mDNS. Set this if Unraid has several interfaces/bridges and the logs show the wrong IP. |
 | `ATVB_WEB_PORT` | 8090 | Dashboard + companion WebSocket port. |
 | `ATVB_LOG_LEVEL` | INFO | `DEBUG` logs every key press and pairing message. |
+| `ATVB_SIRI_URL` | (unset) | Siri container's control API, e.g. `http://127.0.0.1:8477` (§1 b2). |
+| `ATVB_WHISPER_MODEL` | base.en | Local speech model (downloaded once to `/data/models`, ~140 MB). `small.en` is more accurate but slower. |
 
 ---
 
@@ -90,8 +118,21 @@ Open `http://<unraid-ip>:8090`. You should see the Apple TV status and what's pl
 4. Enter **000000** as the code. (The dashboard also shows the code. If you turned off
    "Easy pairing" it'll be a random code.)
 
-D-pad, select, back, home, play/pause, volume, power and the keyboard (type into the Apple TV's
-search fields) all work. Long-press on select/home works too (e.g. long-press home = Control Center).
+D-pad, select, back, home, play/pause, volume, mute, power and the keyboard (type into the Apple
+TV's search fields) all work. Holding a button long-presses it (e.g. hold home = Control Center);
+holding an arrow repeats it.
+
+**Mic button:** with the Siri container set up (§1 b2), your voice goes to Siri on the Apple TV.
+Otherwise the bridge recognizes speech itself (Whisper, on the server; no cloud) and:
+
+| You say | It does |
+|---|---|
+| anything, while a text field is focused | types it in |
+| "pause", "play", "next episode", "go home", "volume up", "mute", "go to sleep" | that command |
+| "open Netflix", "launch Disney Plus", or just "Hulu" | opens the app |
+| anything else ("Stranger Things") | opens Search and types it |
+
+The dashboard shows what was heard and what it did.
 
 ## 3. Install the companion app (media card)
 

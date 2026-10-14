@@ -7,10 +7,28 @@ services:
     network_mode: host
     restart: unless-stopped
     volumes:
-      # On Unraid, e.g. /mnt/user/appdata/atvbridge:/data
+      # On Unraid, e.g. /mnt/user/appdata/atvbridge/data:/data
       - ./data:/data
     environment:
-      # - TZ=Europe/Amsterdam
+      # Send the phone's mic to real Siri via the appletv-siri-voice container below.
+      # Remove to use local speech recognition only.
+      - ATVB_SIRI_URL=http://127.0.0.1:8477
       # - ATVB_HOST_IP=192.168.0.10   # set if the advertised IP is wrong (multiple NICs/bridges)
       # - ATVB_WEB_PORT=8090
+      # - ATVB_WHISPER_MODEL=base.en  # local fallback; small.en is more accurate, slower
       # - ATVB_LOG_LEVEL=DEBUG
+      # - TZ=Europe/Amsterdam
+
+  # HomeKit "Voice Remote" that feeds audio to Siri on the Apple TV (third-party,
+  # https://github.com/marcusadolfsson/appletv-siri-voice). Pair once from the Home app on
+  # an iPhone/iPad/Mac: Add Accessory -> More options -> Voice Remote, code from its logs.
+  appletv-siri-voice:
+    image: ghcr.io/marcusadolfsson/appletv-siri-voice:latest
+    container_name: appletv-siri-voice
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # Pairing state; must persist. On Unraid: /mnt/user/appdata/atvbridge/siri:/data/persist
+      - ./siri-data:/data/persist
+    environment:
+      - HAP_NAME=Chomusuke Voice Remote

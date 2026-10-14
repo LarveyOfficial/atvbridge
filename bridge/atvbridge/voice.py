@@ -19,6 +19,8 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from .siri import SIRI_RATE, SiriRelay, SiriStream, SiriUnavailable
+
 if TYPE_CHECKING:
     from .appletv import AppleTV
 
@@ -123,19 +125,53 @@ def match_app(name: str, apps: dict[str, str], exact: bool = False) -> str | Non
 # --- assistant --------------------------------------------------------------------------
 
 class VoiceAssistant:
-    def __init__(self, appletv: AppleTV, data_dir: Path) -> None:
+    """Sends speech to real Siri when the Siri bridge is set up (ATVB_SIRI_URL), otherwise
+    (or if Siri is unavailable) transcribes it locally and acts on the text."""
+
+    def __init__(self, appletv: AppleTV, data_dir: Path, siri: SiriRelay | None = None) -> None:
         self.appletv = appletv
         self.data_dir = data_dir
+        self.siri = siri or SiriRelay()
+        self._siri_stream: SiriStream | None = None
         # Last result, shown on the dashboard: {"text", "action", "at"}
         self.last: dict[str, Any] | None = None
         self.on_result: Callable[[], None] = lambda: None
         self._model: Any = None
         self._lock = asyncio.Lock()
 
-    def handle(self, pcm: bytes, rate: int, phone: str) -> None:
-        asyncio.get_event_loop().create_task(self._handle(pcm, rate))
+    # --- live audio (for Siri) -------------------------------------------------------
+    def begin(self, phone: str) -> None:
+        if self._siri_stream:
+            self._siri_stream.cancel()
+        self._siri_stream = self.siri.start()
+        if self._siri_stream:
+            LOG.info("Streaming voice from %s to Siri", phone)
 
-    async def _handle(self, pcm: bytes, rate: int) -> None:
+    def chunk(self, pcm: bytes, rate: int) -> None:
+        stream = self._siri_stream
+        if stream is None:
+            return
+        if rate != SIRI_RATE:  # Siri takes 16 kHz; other rates go the local route
+            stream.cancel()
+            self._siri_stream = None
+            return
+        stream.feed(pcm)
+
+    # --- finished utterance --------------------------------------------------------
+    def handle(self, pcm: bytes, rate: int, phone: str) -> None:
+        stream, self._siri_stream = self._siri_stream, None
+        asyncio.get_event_loop().create_task(self._handle(pcm, rate, stream))
+
+    async def _handle(self, pcm: bytes, rate: int, stream: SiriStream | None = None) -> None:
+        note = ""
+        if stream is not None:
+            try:
+                reply = await stream.finish()
+                self._result("", f"sent to Siri ({reply.get('ms', '?')} ms)")
+                return
+            except SiriUnavailable as exc:
+                LOG.warning("Siri unavailable (%s); using local speech recognition", exc)
+                note = f" (Siri unavailable: {exc})"
         async with self._lock:  # one utterance at a time
             save_wav(pcm, rate, self.data_dir / "voice" / "last.wav")
             started = time.monotonic()
@@ -147,7 +183,7 @@ class VoiceAssistant:
                 text = await asyncio.get_running_loop().run_in_executor(None, self.transcribe, pcm, rate, apps)
             except Exception as exc:  # noqa: BLE001
                 LOG.exception("Transcription failed")
-                self._result("", f"speech recognition failed: {exc}")
+                self._result("", f"speech recognition failed: {exc}{note}")
                 return
             LOG.info("Heard %r (%.1f s to transcribe)", text, time.monotonic() - started)
             try:
@@ -155,7 +191,7 @@ class VoiceAssistant:
             except Exception as exc:  # noqa: BLE001
                 LOG.warning("Voice action for %r failed: %s", text, exc)
                 action = f"failed: {exc}"
-            self._result(text, action)
+            self._result(text, action + note)
 
     def _result(self, text: str, action: str) -> None:
         LOG.info("Voice: %r -> %s", text, action)

@@ -129,7 +129,10 @@ class GoogleTVServer:
         self._zc: AsyncZeroconf | None = None
         self._services: list[ServiceInfo] = []
         self.on_change: Callable[[], None] = lambda: None
-        # Called with (pcm, sample_rate, phone ip) for each finished voice session.
+        # Voice sessions: begin(phone ip), each audio chunk(pcm, sample_rate) as it arrives,
+        # then on_voice(all pcm, sample_rate, phone ip) when the session ends.
+        self.on_voice_begin: Callable[[str], None] = lambda phone: None
+        self.on_voice_chunk: Callable[[bytes, int], None] = lambda pcm, rate: None
         self.on_voice: Callable[[bytes, int, str], None] = self._save_voice
         appletv.on_change(self._on_appletv_change)
         appletv.on_keyboard(self._on_keyboard)
@@ -456,6 +459,7 @@ class RemoteSession(TLSConnection):
             if payload.session_id == self._voice_id:
                 self._voice_pcm += payload.samples
                 self._voice_rate = VOICE_RATE_STRUCTURED
+                self._voice_chunk(payload.samples, VOICE_RATE_STRUCTURED)
             else:
                 LOG.debug("Voice payload for session %s (current %s), %d bytes",
                           payload.session_id, self._voice_id, len(payload.samples))
@@ -544,7 +548,14 @@ class RemoteSession(TLSConnection):
             pass
         self._voice_pcm += body
         self._voice_rate = VOICE_RATE_RAW
+        self._voice_chunk(body, VOICE_RATE_RAW)
         return True
+
+    def _voice_chunk(self, pcm: bytes, rate: int) -> None:
+        try:
+            self.server.on_voice_chunk(pcm, rate)
+        except Exception:  # noqa: BLE001
+            LOG.exception("Voice chunk handler failed")
 
     def _start_voice(self) -> None:
         if self._voice_id is not None:
@@ -558,6 +569,10 @@ class RemoteSession(TLSConnection):
         msg.remote_voice_begin.package_name = VOICE_PACKAGE
         self.send(msg)
         LOG.info("Voice session %s started by %s", self._voice_id, self.peer_ip)
+        try:
+            self.server.on_voice_begin(self.peer_ip)
+        except Exception:  # noqa: BLE001
+            LOG.exception("Voice begin handler failed")
 
     def _end_voice(self) -> None:
         if self._voice_id is None:

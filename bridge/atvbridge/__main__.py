@@ -24,6 +24,8 @@ async def main() -> None:
     gtv = GoogleTVServer(store, appletv)
     web = Web(store, appletv, gtv)
     voice = VoiceAssistant(appletv, store.data_dir)
+    gtv.on_voice_begin = voice.begin
+    gtv.on_voice_chunk = voice.chunk
     gtv.on_voice = voice.handle
     voice.on_result = web.broadcast
     web.voice = voice
@@ -42,6 +44,7 @@ async def main() -> None:
     await web.stop()
     await gtv.stop()
     await appletv.stop()
+    await voice.siri.close()
 
 
 if __name__ == "__main__":
