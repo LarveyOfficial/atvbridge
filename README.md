@@ -187,4 +187,6 @@ Note: the Android Terminal VM is NAT'ed (10.80.90.x), so phones can't reach a br
   can fall back to a random code (shown on the dashboard) if the phone skipped the remote port.
 - **"Apple TV not found"**: the Apple TV's IP changed. Give it a DHCP reservation, or re-run setup
   from the dashboard ("Change Apple TV").
-- **No artwork**: some apps (YouTube) don't publish artwork to the Apple TV's now-playing info.
+- **Artwork**: some apps (YouTube) don't publish artwork to the Apple TV. The bridge then looks up the
+  YouTube thumbnail (only when title and channel match) or uses the app's App Store icon. This sends the
+  title/channel to YouTube and the app id to Apple; set `ATVB_ONLINE_ARTWORK=0` to turn it off.

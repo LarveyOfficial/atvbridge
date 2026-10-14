@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any, Callable
@@ -20,6 +21,7 @@ from pyatv.interface import (
 )
 
 from . import rti
+from .artwork import ArtworkFinder
 from .store import Store
 
 LOG = logging.getLogger(__name__)
@@ -47,6 +49,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self._focus_changed = asyncio.Event()
         # Text input session for the focused field: (session uuid, text we know is in it).
         self._ti_session: bytes | None = None
+        self._finder = ArtworkFinder()
+        self._ext_art_key: str | None = None
         self._ti_text: str | None = None
         self._apps: dict[str, str] = {}
         self._apps_at = 0.0
@@ -66,6 +70,7 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         pending = self._close()
         if pending:
             await asyncio.wait(pending, timeout=5)
+        await self._finder.close()
 
     async def restart(self) -> None:
         await self.stop()
@@ -239,15 +244,24 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 "updated_at": time.time(),
                 "artwork_id": None,
             }
-            art_id = self.atv.metadata.artwork_id
-            if art_id and art_id != self._artwork_id:
-                art = await self.atv.metadata.artwork(width=512, height=512)
-                self.artwork = (art.bytes, art.mimetype) if art else None
-                self._artwork_id = art_id if art else None
-            elif not art_id:
-                self.artwork, self._artwork_id = None, None
-            now_playing["artwork_id"] = self._artwork_id
             active = state not in (None, DeviceState.Idle, DeviceState.Stopped)
+            art_id = self.atv.metadata.artwork_id
+            if art_id:
+                self._ext_art_key = None
+                if art_id != self._artwork_id:
+                    art = await self.atv.metadata.artwork(width=512, height=512)
+                    self.artwork = (art.bytes, art.mimetype) if art else None
+                    self._artwork_id = art_id if art else None
+            else:
+                # No artwork from the app (e.g. YouTube): look it up online, in the background.
+                key = f"{(app or {}).get('id')}\n{playing.title}\n{playing.artist}" if active else None
+                if key != self._ext_art_key:
+                    self._ext_art_key = key
+                    self.artwork, self._artwork_id = None, None
+                    if key:
+                        self.loop.create_task(self._lookup_artwork(key, (app or {}).get("id") or "",
+                                                                   playing.title, playing.artist))
+            now_playing["artwork_id"] = self._artwork_id
             self._set(now_playing=now_playing if active else None, app=app, power=self._power_str())
         except Exception as exc:  # noqa: BLE001
             LOG.debug("Failed to refresh now playing: %s", exc)
@@ -323,6 +337,16 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             raise NotImplementedError("MRP HID keys are not available")
         await protocol.send(messages.send_hid_event(usage_page, usage, True))
         await protocol.send(messages.send_hid_event(usage_page, usage, False))
+
+    async def _lookup_artwork(self, key: str, app_id: str, title: str | None, artist: str | None) -> None:
+        found = await self._finder.find(app_id, title, artist)
+        if found is None or key != self._ext_art_key:
+            return
+        self.artwork = found
+        self._artwork_id = hashlib.sha1(key.encode()).hexdigest()[:16]
+        np = self.state.get("now_playing")
+        if np:
+            self._set(now_playing={**np, "artwork_id": self._artwork_id})
 
     # --- commands -------------------------------------------------------------------
     async def command(self, name: str, hold: bool = False, **kwargs: Any) -> None:
