@@ -1,4 +1,4 @@
-package com.atvbridge.companion
+package com.larvey.atvbridge
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -417,9 +417,9 @@ class BridgeService : Service(), BridgeClient.Listener {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_MEDIA = "media"
         private const val CHANNEL_STATUS = "status"
-        private const val ACTION_STOP = "com.atvbridge.companion.STOP"
-        private const val ACTION_COMMAND = "com.atvbridge.companion.COMMAND"
-        private const val ACTION_RECONNECT = "com.atvbridge.companion.RECONNECT"
+        private const val ACTION_STOP = "com.larvey.atvbridge.STOP"
+        private const val ACTION_COMMAND = "com.larvey.atvbridge.COMMAND"
+        private const val ACTION_RECONNECT = "com.larvey.atvbridge.RECONNECT"
         private const val EXTRA_COMMAND = "command"
         private const val CUSTOM_REWIND = "rewind10"
         private const val CUSTOM_FORWARD = "forward10"

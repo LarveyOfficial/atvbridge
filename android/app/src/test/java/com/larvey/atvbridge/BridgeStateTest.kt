@@ -1,4 +1,4 @@
-package com.atvbridge.companion
+package com.larvey.atvbridge
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

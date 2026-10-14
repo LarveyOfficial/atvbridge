@@ -1,4 +1,4 @@
-package com.atvbridge.companion
+package com.larvey.atvbridge
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory

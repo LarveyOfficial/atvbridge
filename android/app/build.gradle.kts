@@ -1,30 +1,44 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
 android {
-    namespace = "com.atvbridge.companion"
+    namespace = "com.larvey.atvbridge"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.atvbridge.companion"
+        applicationId = "com.larvey.atvbridge"
         minSdk = 29
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
     }
 
-    // CI signs with the keystore from ATVB_KEYSTORE (see .github/workflows/android.yml);
-    // without it, release builds use the local debug key (fine for a sideloaded app).
-    val keystore = System.getenv("ATVB_KEYSTORE")?.takeIf { it.isNotBlank() }
+    // Release signing: CI passes the keystore via ATVB_KEYSTORE* env vars (see
+    // .github/workflows/build.yml); locally ~/.android/atvbridge-release.properties
+    // (storeFile, storePassword, keyAlias, keyPassword). Without either: the debug key.
+    val signing: Map<String, String>? = System.getenv("ATVB_KEYSTORE")?.takeIf { it.isNotBlank() }?.let {
+        mapOf(
+            "storeFile" to it,
+            "storePassword" to System.getenv("ATVB_KEYSTORE_PASSWORD").orEmpty(),
+            "keyAlias" to System.getenv("ATVB_KEY_ALIAS").orEmpty(),
+            "keyPassword" to System.getenv("ATVB_KEY_PASSWORD").orEmpty(),
+        )
+    } ?: File(System.getProperty("user.home"), ".android/atvbridge-release.properties")
+        .takeIf { it.isFile }
+        ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+        ?.let { p -> p.stringPropertyNames().associateWith { p.getProperty(it) } }
+
     signingConfigs {
-        if (keystore != null) {
+        if (signing != null) {
             create("release") {
-                storeFile = file(keystore)
-                storePassword = System.getenv("ATVB_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("ATVB_KEY_ALIAS")
-                keyPassword = System.getenv("ATVB_KEY_PASSWORD")
+                storeFile = file(signing.getValue("storeFile"))
+                storePassword = signing["storePassword"]
+                keyAlias = signing["keyAlias"]
+                keyPassword = signing["keyPassword"]
             }
         }
     }
@@ -32,7 +46,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug")
+            signingConfig = signingConfigs.getByName(if (signing != null) "release" else "debug")
         }
     }
 

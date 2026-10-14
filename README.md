@@ -142,9 +142,9 @@ cd android
 ```
 
 **Signing:** CI signs with the keystore in the repo secrets `ANDROID_KEYSTORE_BASE64`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Use the same key as your
-installed app so new versions install as updates (local builds use `~/.android/debug.keystore`:
-password `android`, alias `androiddebugkey`).
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Locally, release builds use
+`~/.android/atvbridge-release.properties` (`storeFile`, `storePassword`, `keyAlias`,
+`keyPassword`). **Back up that keystore and its password**: every update must be signed with it.
 
 Needs JDK 17+ and the Android SDK (`local.properties` → `sdk.dir=...`).
 On this ARM Googlebook VM, Google's x86-only `aapt2` runs through `box64`

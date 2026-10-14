@@ -1,4 +1,4 @@
-package com.atvbridge.companion
+package com.larvey.atvbridge
 
 import android.annotation.TargetApi
 import android.media.MediaRoute2Info
@@ -85,7 +85,7 @@ class RouteProviderService : MediaRoute2ProviderService() {
     override fun onTransferToRoute(requestId: Long, sessionId: String, routeId: String) {}
 
     companion object {
-        const val FEATURE = "com.atvbridge.companion.FEATURE_APPLE_TV"
+        const val FEATURE = "com.larvey.atvbridge.FEATURE_APPLE_TV"
         const val ROUTE_ID = "appletv"
         /** Routing session id; also the media session VolumeProvider's volumeControlId. */
         const val SESSION_ID = "atvbridge"
