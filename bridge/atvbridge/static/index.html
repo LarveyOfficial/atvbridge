@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Apple TV Bridge</title>
+<meta name="theme-color" content="#0f1115">
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #16181d; --muted: #6b7280; --line: #e3e5e9;
+    --accent: #2563eb; --accent-text: #fff; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+    --pad: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2e36;
+      --accent: #3b82f6; --pad: #22262e; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 16px 16px 48px; }
+  header { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 10px;
+          border-radius: 999px; background: var(--pad); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .grid { grid-template-columns: 1.4fr 1fr; } .span { grid-column: 1 / -1; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+          box-shadow: var(--shadow); min-width: 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+             margin: 0 0 12px; font-weight: 600; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  button {
+    font: inherit; color: inherit; background: var(--pad); border: 0; border-radius: 10px;
+    padding: 8px 14px; cursor: pointer; touch-action: manipulation;
+  }
+  button:hover { filter: brightness(.96); }
+  @media (prefers-color-scheme: dark) { button:hover { filter: brightness(1.15); } }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--bad); }
+  button.icon { display: inline-grid; place-items: center; padding: 0; width: 44px; height: 44px; border-radius: 50%; }
+  button.icon.big { width: 56px; height: 56px; }
+  svg { width: 22px; height: 22px; fill: currentColor; }
+  input[type=text], input[type=number] {
+    font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 12px; min-width: 0;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row > input[type=text] { flex: 1; }
+
+  /* Now playing */
+  .np { display: flex; gap: 16px; align-items: center; }
+  .art { width: 112px; height: 112px; flex: none; border-radius: 10px; background: var(--pad) center/cover no-repeat;
+         display: grid; place-items: center; color: var(--muted); }
+  .art.has { color: transparent; }
+  .art svg { width: 40px; height: 40px; }
+  .np-text { min-width: 0; flex: 1; }
+  .np-title { font-size: 18px; font-weight: 650; overflow: hidden; text-overflow: ellipsis;
+              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .np-sub { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress { margin-top: 14px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--pad); cursor: pointer; position: relative; }
+  .bar > div { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); width: 0; }
+  .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+           margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .transport { display: flex; justify-content: center; gap: 10px; margin-top: 12px; }
+  .volume { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .volume input { flex: 1; accent-color: var(--accent); }
+
+  /* Remote */
+  .remote { display: grid; justify-items: center; gap: 14px; }
+  .dpad { position: relative; width: 196px; height: 196px; border-radius: 50%; background: var(--pad); }
+  .dpad button { position: absolute; background: transparent; width: 64px; height: 64px; border-radius: 50%; }
+  .dpad button:hover { background: rgba(127,127,127,.12); filter: none; }
+  .dpad .up { top: 0; left: 66px; } .dpad .down { bottom: 0; left: 66px; }
+  .dpad .left { left: 0; top: 66px; } .dpad .right { right: 0; top: 66px; }
+  .dpad .ok { top: 58px; left: 58px; width: 80px; height: 80px; background: var(--card); border: 1px solid var(--line); }
+  .remote .row { justify-content: center; }
+
+  /* Pairing banner */
+  .banner { display: none; border-color: var(--accent); }
+  .banner.show { display: block; }
+  .code { font: 700 40px/1.1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .18em; margin: 6px 0; }
+
+  /* Lists */
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.list li:first-child { border-top: 0; }
+  ul.list .grow { flex: 1; min-width: 0; }
+  ul.list .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--pad); color: var(--muted); }
+  .tag.on { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+
+  label.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+  label.switch input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .field + .field { margin-top: 16px; }
+  .field > .label { font-weight: 600; margin-bottom: 6px; }
+  ol.steps { margin: 0 0 4px; padding-left: 20px; }
+  ol.steps li { margin: 3px 0; }
+
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
+           background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px;
+           transition: .2s; pointer-events: none; max-width: calc(100% - 32px); }
+  #toast.show { opacity: 1; transform: translateX(-50%); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="name">Apple TV Bridge</h1>
+    <span class="pill" id="conn"><span class="dot"></span><span>Connecting…</span></span>
+    <span class="pill" id="remotes"><span class="dot"></span><span>0 remotes</span></span>
+  </header>
+
+  <div class="grid">
+    <section class="card span banner" id="pairing">
+      <h2>Pairing request</h2>
+      <div><b id="pair-client">Phone</b> <span class="muted" id="pair-ip"></span> wants to pair. Enter this code on the phone:</div>
+      <div class="code" id="pair-code">000000</div>
+    </section>
+
+    <section class="card" id="np-card">
+      <h2>Now playing</h2>
+      <div class="np">
+        <div class="art" id="art"><svg viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 14H3V5h18v12z"/></svg></div>
+        <div class="np-text">
+          <div class="np-title" id="np-title">Nothing playing</div>
+          <div class="np-sub" id="np-artist"></div>
+          <div class="np-sub small" id="np-app"></div>
+        </div>
+      </div>
+      <div class="progress" id="progress">
+        <div class="bar" id="bar" title="Seek"><div id="bar-fill"></div></div>
+        <div class="times"><span id="t-pos">0:00</span><span id="t-total">0:00</span></div>
+      </div>
+      <div class="transport">
+        <button class="icon" data-cmd="previous" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+        <button class="icon" data-cmd="skip_backward" title="Back 10s"><svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg></button>
+        <button class="icon big primary" data-cmd="play_pause" id="pp" title="Play / pause"><svg viewBox="0 0 24 24" id="pp-icon"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="icon" data-cmd="skip_forward" title="Forward 10s"><svg viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg></button>
+        <button class="icon" data-cmd="next" title="Next"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+      </div>
+      <div class="volume">
+        <svg viewBox="0 0 24 24" class="muted"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12z"/></svg>
+        <input type="range" min="0" max="100" step="1" id="volume" aria-label="Volume">
+        <span class="small muted" id="vol-val" style="width:3ch;text-align:right">–</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Remote</h2>
+      <div class="remote">
+        <div class="dpad">
+          <button class="up" data-cmd="up" title="Up"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg></button>
+          <button class="left" data-cmd="left" title="Left"><svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5z"/></svg></button>
+          <button class="ok" data-cmd="select" title="Select"></button>
+          <button class="right" data-cmd="right" title="Right"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5z"/></svg></button>
+          <button class="down" data-cmd="down" title="Down"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></button>
+        </div>
+        <div class="row">
+          <button data-cmd="menu" title="Back (Esc)">Back</button>
+          <button data-cmd="home" title="Home (H)">Home</button>
+          <button data-cmd="volume_down" title="Volume down">Vol −</button>
+          <button data-cmd="volume_up" title="Volume up">Vol +</button>
+          <button data-cmd="power_toggle" title="Power">Power</button>
+        </div>
+        <div class="small muted">Keyboard: arrows, Enter, Esc, H, Space</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Paired phones</h2>
+      <ul class="list" id="phones"></ul>
+      <div class="muted small" id="no-phones">No phones paired yet.</div>
+      <details style="margin-top:12px">
+        <summary class="small" style="cursor:pointer">How to connect an Android phone</summary>
+        <ol class="steps small" style="margin-top:8px">
+          <li>Make sure the phone is on the same Wi-Fi network as the bridge.</li>
+          <li>Open the <b>Google TV remote</b>: the “Remote” Quick Settings tile, or the Google Home / Google TV app.</li>
+          <li>Pick <b class="tvname">your Apple TV</b> from the device list.</li>
+          <li>Enter the code shown at the top of this page (usually <b>000000</b>).</li>
+        </ol>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Settings</h2>
+      <div class="field">
+        <div class="label">Name shown on phones</div>
+        <form class="row" id="name-form">
+          <input type="text" id="display-name" placeholder="Apple TV" maxlength="60">
+          <button type="submit">Save</button>
+        </form>
+      </div>
+      <div class="field">
+        <label class="switch">
+          <span><b>Easy pairing</b><br><span class="small muted">Pairing code is always 000000</span></span>
+          <input type="checkbox" id="easy">
+        </label>
+      </div>
+    </section>
+
+    <section class="card span" id="setup-card">
+      <h2>Apple TV</h2>
+      <div id="atv-summary" class="row" style="justify-content:space-between">
+        <div><b id="atv-name">Not configured</b> <span class="muted small" id="atv-detail"></span></div>
+        <button id="setup-toggle">Change Apple TV</button>
+      </div>
+      <div id="setup" class="hidden" style="margin-top:12px">
+        <div class="row">
+          <button class="primary" id="scan">Scan network</button>
+          <input type="text" id="manual-ip" placeholder="…or enter an IP address" inputmode="decimal">
+          <button id="manual-go">Use IP</button>
+        </div>
+        <ul class="list" id="devices" style="margin-top:8px"></ul>
+        <div id="pin-step" class="hidden" style="margin-top:12px">
+          <div id="pin-label" style="margin-bottom:8px"></div>
+          <form class="row" id="pin-form">
+            <input type="text" id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="PIN" style="max-width:140px">
+            <button class="primary" type="submit">Pair</button>
+            <button type="button" id="pin-cancel">Cancel</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+let state = null, ws = null, clockOffset = 0, seeking = false, volumeDragging = false;
+
+// --- connection ------------------------------------------------------------------
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "state") {
+      state = msg;
+      clockOffset = Date.now() / 1000 - msg.server_time;
+      render();
+    } else if (msg.type === "result" && msg.error) {
+      toast(msg.error);
+    }
+  };
+  ws.onclose = () => { setPill("#conn", "bad", "Bridge offline"); setTimeout(connect, 2000); };
+}
+
+function send(command, extra = {}) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "command", command, ...extra }));
+  } else {
+    api("/api/command", { command, ...extra });
+  }
+}
+
+async function api(path, body, method = "POST") {
+  const res = await fetch(path, {
+    method, headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// --- rendering --------------------------------------------------------------------
+function setPill(sel, cls, text) {
+  const el = $(sel);
+  el.querySelector(".dot").className = "dot " + cls;
+  el.querySelector("span:last-child").textContent = text;
+}
+
+function fmt(sec) {
+  if (sec == null || !isFinite(sec)) return "0:00";
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = String(sec % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+function ago(ts) {
+  if (!ts) return "never";
+  const d = Date.now() / 1000 - clockOffset - ts;
+  if (d < 60) return "just now";
+  if (d < 3600) return Math.floor(d / 60) + " min ago";
+  if (d < 86400) return Math.floor(d / 3600) + " h ago";
+  return Math.floor(d / 86400) + " d ago";
+}
+
+function render() {
+  const s = state, atv = s.appletv || {}, cfg = s.config || {};
+  document.title = s.name + " · Bridge";
+  $("#name").textContent = s.name;
+  document.querySelectorAll(".tvname").forEach((el) => (el.textContent = s.name));
+
+  if (!cfg.configured) setPill("#conn", "warn", "Apple TV not set up");
+  else if (atv.connected) setPill("#conn", "ok", atv.power === "off" ? "Connected · asleep" : "Connected");
+  else setPill("#conn", "bad", atv.error ? "Disconnected: " + atv.error : "Connecting to Apple TV…");
+  const n = s.remotes_connected;
+  setPill("#remotes", n ? "ok" : "", n + (n === 1 ? " remote" : " remotes") + " connected");
+
+  // Pairing banner
+  const p = s.pairing;
+  $("#pairing").classList.toggle("show", !!p);
+  if (p) {
+    $("#pair-client").textContent = p.client;
+    $("#pair-ip").textContent = "(" + p.ip + ")";
+    $("#pair-code").textContent = p.code;
+  }
+
+  renderNowPlaying();
+
+  // Volume
+  if (!volumeDragging) {
+    const v = atv.volume;
+    $("#volume").disabled = v == null;
+    $("#volume").value = v == null ? 0 : Math.round(v);
+    $("#vol-val").textContent = v == null ? "–" : Math.round(v);
+  }
+
+  // Phones
+  const list = $("#phones");
+  list.replaceChildren(...s.phones.map((ph) => {
+    const li = document.createElement("li");
+    const info = document.createElement("div");
+    info.className = "grow";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = ph.name;
+    const meta = document.createElement("div");
+    meta.className = "small muted";
+    meta.textContent = `${ph.last_ip || "?"} · seen ${ago(ph.last_seen)}`;
+    info.append(name, meta);
+    const tag = document.createElement("span");
+    tag.className = "tag" + (ph.connected ? " on" : "");
+    tag.textContent = ph.connected ? "connected" : "offline";
+    const btn = document.createElement("button");
+    btn.className = "danger small";
+    btn.textContent = "Remove";
+    btn.onclick = async () => {
+      if (!confirm(`Remove ${ph.name}? It will need to pair again.`)) return;
+      try { await api("/api/phones/" + encodeURIComponent(ph.fingerprint), undefined, "DELETE"); }
+      catch (e) { toast(e.message); }
+    };
+    li.append(info, tag, btn);
+    return li;
+  }));
+  $("#no-phones").classList.toggle("hidden", s.phones.length > 0);
+
+  // Settings (don't clobber what the user is typing)
+  if (document.activeElement !== $("#display-name")) $("#display-name").value = cfg.display_name || "";
+  $("#display-name").placeholder = cfg.name || "Apple TV";
+  $("#easy").checked = !!cfg.easy_pairing;
+
+  // Apple TV summary
+  $("#atv-name").textContent = cfg.configured ? (cfg.name || "Apple TV") : "Not configured";
+  $("#atv-detail").textContent = cfg.configured ? [cfg.model, cfg.address].filter(Boolean).join(" · ") : "";
+  $("#setup-toggle").textContent = cfg.configured ? "Change Apple TV" : "Set up";
+  if (!cfg.configured && !setupTouched) $("#setup").classList.remove("hidden");
+}
+
+let lastArtId = null;
+function renderNowPlaying() {
+  const atv = state.appletv || {}, np = atv.now_playing, app = atv.app;
+  $("#np-title").textContent = np ? (np.title || app?.name || "Playing") : (atv.power === "off" ? "Apple TV is asleep" : "Nothing playing");
+  $("#np-artist").textContent = np ? [np.artist, np.album || np.series].filter(Boolean).join(" — ") : "";
+  $("#np-app").textContent = app?.name || "";
+  $("#pp-icon").innerHTML = np && np.state === "playing" ? PAUSE : PLAY;
+  $("#progress").classList.toggle("hidden", !(np && np.total));
+
+  const artId = np?.artwork_id || null;
+  if (artId !== lastArtId) {
+    lastArtId = artId;
+    const art = $("#art");
+    art.style.backgroundImage = artId ? `url("/api/artwork?id=${encodeURIComponent(artId)}")` : "";
+    art.classList.toggle("has", !!artId);
+  }
+  tick();
+}
+
+function position() {
+  const np = state?.appletv?.now_playing;
+  if (!np || np.position == null) return null;
+  let pos = np.position;
+  if (np.state === "playing") pos += Date.now() / 1000 - clockOffset - np.updated_at;
+  return np.total ? Math.min(pos, np.total) : pos;
+}
+
+function tick() {
+  const np = state?.appletv?.now_playing;
+  if (!np || !np.total || seeking) return;
+  const pos = position();
+  $("#bar-fill").style.width = (100 * pos / np.total) + "%";
+  $("#t-pos").textContent = fmt(pos);
+  $("#t-total").textContent = fmt(np.total);
+}
+setInterval(tick, 500);
+
+function toast(text) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+// --- controls ---------------------------------------------------------------------
+document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => send(b.dataset.cmd)));
+
+$("#bar").addEventListener("click", (e) => {
+  const np = state?.appletv?.now_playing;
+  if (!np?.total) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  const pos = Math.round(np.total * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)));
+  send("seek", { position: pos });
+});
+
+const vol = $("#volume");
+vol.addEventListener("input", () => { volumeDragging = true; $("#vol-val").textContent = vol.value; });
+vol.addEventListener("change", () => { volumeDragging = false; send("set_volume", { level: Number(vol.value) }); });
+
+const KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+               Enter: "select", Escape: "menu", Backspace: "menu", h: "home", " ": "play_pause" };
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input, textarea, select, button") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const cmd = KEYS[e.key];
+  if (cmd) { e.preventDefault(); send(cmd); }
+});
+
+$("#name-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#display-name").blur();
+  try { await api("/api/settings", { display_name: $("#display-name").value.trim() }); toast("Saved"); }
+  catch (err) { toast(err.message); }
+});
+$("#easy").addEventListener("change", async (e) => {
+  try { await api("/api/settings", { easy_pairing: e.target.checked }); }
+  catch (err) { toast(err.message); }
+});
+
+// --- Apple TV setup ---------------------------------------------------------------
+let setupTouched = false, pairTarget = null, pairProtocol = null;
+const STEPS = { companion: "Step 1 of 2 (remote control)", airplay: "Step 2 of 2 (now playing)" };
+
+$("#setup-toggle").onclick = () => { setupTouched = true; $("#setup").classList.toggle("hidden"); };
+
+$("#scan").onclick = async () => {
+  const btn = $("#scan");
+  btn.disabled = true; btn.textContent = "Scanning…";
+  try {
+    const { devices } = await api("/api/scan", {});
+    showDevices(devices);
+  } catch (e) { toast(e.message); }
+  btn.disabled = false; btn.textContent = "Scan network";
+};
+
+$("#manual-go").onclick = async () => {
+  const ip = $("#manual-ip").value.trim();
+  if (!ip) return;
+  try { showDevices((await api("/api/scan", { address: ip })).devices); }
+  catch (e) { toast(e.message); }
+};
+
+function showDevices(devices) {
+  const list = $("#devices");
+  const tvs = devices.filter((d) => d.protocols.includes("companion"));
+  if (!tvs.length) {
+    list.innerHTML = '<li class="muted small">No Apple TVs found. Try entering its IP address.</li>';
+    return;
+  }
+  list.replaceChildren(...tvs.map((d) => {
+    const li = document.createElement("li");
+    const info = document.createElement("div");
+    info.className = "grow";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = d.name;
+    const meta = document.createElement("div");
+    meta.className = "small muted";
+    meta.textContent = [d.model, d.os && "tvOS " + d.os, d.address].filter(Boolean).join(" · ");
+    info.append(name, meta);
+    const btn = document.createElement("button");
+    btn.className = "primary";
+    btn.textContent = "Pair";
+    btn.onclick = () => beginPair(d, "companion");
+    li.append(info, btn);
+    return li;
+  }));
+}
+
+async function beginPair(device, protocol) {
+  pairTarget = device; pairProtocol = protocol;
+  $("#pin-step").classList.remove("hidden");
+  $("#pin-label").textContent = `${STEPS[protocol]}: asking ${device.name} for a PIN…`;
+  $("#pin").value = "";
+  try {
+    await api("/api/pair/begin", { address: device.address, protocol });
+    $("#pin-label").textContent = `${STEPS[protocol]}: enter the PIN shown on ${device.name}.`;
+    $("#pin").focus();
+  } catch (e) {
+    $("#pin-label").textContent = `${STEPS[protocol]}: couldn't start pairing (${e.message}).`;
+  }
+}
+
+$("#pin-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pin = $("#pin").value.trim();
+  if (!pin) return;
+  try {
+    const res = await api("/api/pair/finish", { pin });
+    if (res.done) {
+      toast(`Paired with ${pairTarget.name}`);
+      $("#pin-step").classList.add("hidden");
+      $("#setup").classList.add("hidden");
+      $("#devices").replaceChildren();
+    } else {
+      beginPair(pairTarget, "airplay");
+    }
+  } catch (err) {
+    toast(err.message);
+    beginPair(pairTarget, pairProtocol);
+  }
+});
+$("#pin-cancel").onclick = () => $("#pin-step").classList.add("hidden");
+
+connect();
+</script>
+</body>
+</html>

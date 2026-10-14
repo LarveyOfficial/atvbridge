@@ -1,0 +1,17 @@
+# Bridge runtime data: Apple TV credentials, server key, paired phones
+bridge/data/
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.keystore
+.idea/
+*.iml
+.kotlin/

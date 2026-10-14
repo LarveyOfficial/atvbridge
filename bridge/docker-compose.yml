@@ -1,0 +1,16 @@
+services:
+  atvbridge:
+    build: .
+    image: atvbridge:latest
+    container_name: atvbridge
+    # Required: mDNS discovery and the Google TV ports must be on the LAN directly.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # On Unraid, e.g. /mnt/user/appdata/atvbridge:/data
+      - ./data:/data
+    environment:
+      # - TZ=Europe/Amsterdam
+      # - ATVB_HOST_IP=192.168.0.10   # set if the advertised IP is wrong (multiple NICs/bridges)
+      # - ATVB_WEB_PORT=8090
+      # - ATVB_LOG_LEVEL=DEBUG
