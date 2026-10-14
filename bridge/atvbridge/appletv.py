@@ -319,7 +319,10 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             else:
                 await self.atv.power.turn_on()
         elif name == "text_set":
-            await self.atv.keyboard.text_set(kwargs["text"])
+            if kwargs["text"]:
+                await self.atv.keyboard.text_set(kwargs["text"])
+            else:
+                await self.atv.keyboard.text_clear()
         elif name == "launch":
             await self.atv.apps.launch_app(kwargs["app"])
         else:

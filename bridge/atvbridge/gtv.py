@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from zeroconf import ServiceInfo
 from zeroconf.asyncio import AsyncZeroconf
 
-from . import voice
+from . import ime, voice
 from .certs import DEFAULT_EXPONENT, EASY_CODE, ServerIdentity, fingerprint
 from .tls import ProtobufFraming, TLSConnection, make_context
 
@@ -120,6 +120,14 @@ class GoogleTVServer:
         self.identity = ServerIdentity(store.data_dir, self._cert_cn())
         # Client certs seen on the remote port from unpaired phones, by IP.
         self.pending: dict[str, Any] = {}
+        # The Apple TV's focused text field, as announced to phones (see ime.py).
+        self.ime_field_id = 0      # 0 = no text field focused
+        self._ime_field_seq = 0
+        self.ime_text = ""
+        self.ime_cursor = (0, 0)
+        self.ime_text_counter = 0
+        self._text_target: str | None = None
+        self._text_task: asyncio.Task | None = None
         # Fingerprints of phones whose first pairing connection we dropped (see PairingSession).
         self.bounced: set[str] = set()
         # Current pairing (shown on the dashboard): {"code", "client", "ip", "started"}
@@ -217,8 +225,60 @@ class GoogleTVServer:
             s.push_state()
 
     def _on_keyboard(self, focused: bool, text: str | None) -> None:
+        if focused:
+            self._ime_field_seq += 1
+            self.ime_field_id = self._ime_field_seq
+            self.ime_text = text or ""
+            self.ime_cursor = (len(self.ime_text),) * 2  # type: ignore[assignment]
+            self.ime_text_counter += 1
+        else:
+            self.ime_field_id = 0
         for s in list(self.sessions):
-            s.push_keyboard(focused, text or "")
+            s.push_keyboard()
+
+    def ime_start_frames(self) -> list[bytes]:
+        """StartInput + ShowHide describing the current field, as a Google TV sends them."""
+        app = (self.appletv.state.get("app") or {}).get("id") or ""
+        if not self.ime_field_id:
+            return [ime.start_input(0, app), ime.show_hide(False)]
+        return [
+            ime.start_input(self.ime_field_id, app, self.ime_text_counter, self.ime_text, hint="Search"),
+            ime.show_hide(True),
+        ]
+
+    def apply_phone_edit(self, session: RemoteSession, batch: ime.BatchEdit) -> None:
+        if not self.ime_field_id or batch.field_id != self.ime_field_id:
+            LOG.debug("Ignoring edit for field %s (current %s)", batch.field_id, self.ime_field_id)
+            return
+        text, cursor = ime.apply_edits(self.ime_text, self.ime_cursor, batch.edits)
+        for e in batch.edits:
+            if e.kind == "action":
+                LOG.info("Phone pressed the keyboard's action key (%s)", e.action)
+        if text == self.ime_text and cursor == self.ime_cursor:
+            return
+        self.ime_cursor = cursor
+        if text != self.ime_text:
+            self.ime_text = text
+            self.ime_text_counter += 1
+            self._sync_text(text)
+        for s in list(self.sessions):
+            s.send_raw(ime.text_update(self.ime_text_counter, text, *cursor, own_edit=s is session))
+
+    def _sync_text(self, text: str) -> None:
+        """Send the field's text to the Apple TV; fast typing collapses to the latest text."""
+        self._text_target = text
+        if self._text_task is None or self._text_task.done():
+            self._text_task = asyncio.get_event_loop().create_task(self._text_worker())
+
+    async def _text_worker(self) -> None:
+        sent = None
+        while self._text_target != sent:
+            sent = self._text_target
+            try:
+                await self.appletv.command("text_set", text=sent)
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("Typing on the Apple TV failed: %s", exc)
+                return
 
 
 class PairingSession(TLSConnection):
@@ -347,8 +407,6 @@ class RemoteSession(TLSConnection):
         self._ping_task: asyncio.Task | None = None
         self._last_rx = time.monotonic()
         self._ping_n = 0
-        self._ime_counter = 0
-        self._field_counter = 0
         self._press: _Press | None = None
         self._voice_id: int | None = None
         self._voice_pcm = bytearray()
@@ -370,6 +428,9 @@ class RemoteSession(TLSConnection):
 
     def send(self, msg: RemoteMessage) -> None:
         self.write(ProtobufFraming.encode(msg.SerializeToString()))
+
+    def send_raw(self, frame: bytes) -> None:
+        self.write(ProtobufFraming.encode(frame))
 
     def on_ready(self) -> None:
         assert self.peer_cert is not None
@@ -402,6 +463,7 @@ class RemoteSession(TLSConnection):
         if self._voice_timeout:
             self._voice_timeout.cancel()
 
+
     async def _pinger(self) -> None:
         while True:
             await asyncio.sleep(5)
@@ -418,6 +480,15 @@ class RemoteSession(TLSConnection):
         self._last_rx = time.monotonic()
         for raw in self.framing.feed(data):
             if self._voice_id is not None and raw.startswith(VOICE_PAYLOAD_TAG) and self._raw_voice(raw):
+                continue
+            if ime.top_field(raw) == ime.BATCH_EDIT:
+                try:
+                    batch = ime.parse_batch_edit(raw)
+                except ValueError as exc:
+                    LOG.debug("Bad keyboard edit from %s: %s", self.peer_ip, exc)
+                    continue
+                LOG.debug("Keyboard edit from %s: %s", self.peer_ip, batch)
+                self.server.apply_phone_edit(self, batch)
                 continue
             msg = RemoteMessage()
             try:
@@ -438,6 +509,8 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_set_active"):
             self.active = True
             self.push_state(initial=True)
+            if self.server.ime_field_id:
+                self.push_keyboard()
         elif msg.HasField("remote_ping_response"):
             pass
         elif msg.HasField("remote_ping_request"):
@@ -466,11 +539,8 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_voice_end"):
             if msg.remote_voice_end.session_id == self._voice_id:
                 self._end_voice()
-        elif msg.HasField("remote_ime_batch_edit"):
-            edits = msg.remote_ime_batch_edit.edit_info
-            if edits:
-                # The phone sends the whole field contents after each edit.
-                self._run("text_set", text=edits[-1].text_field_status.value)
+        elif msg.HasField("remote_ime_show_request"):
+            pass  # phone asking to show/hide the TV keyboard (field 22); nothing to do
         else:
             LOG.debug("Unhandled remote message: %s", msg)
 
@@ -654,48 +724,14 @@ class RemoteSession(TLSConnection):
             self._run("volume_up" if steps > 0 else "volume_down")
         self._push_volume()
 
-    def push_keyboard(self, focused: bool, text: str = "") -> None:
-        """Tell the phone a text field gained/lost focus, like a Google TV does when its
-        on-screen keyboard opens, so the phone offers to type."""
+    def push_keyboard(self) -> None:
+        """Tell the phone the Apple TV's text field opened/closed, so it offers to type."""
         if not self.active:
             return
-        app = (self.server.appletv.state.get("app") or {}).get("id") or ""
-        if not focused:
-            msg = RemoteMessage()
-            msg.remote_ime_key_inject.app_info.app_package = app
-            self.send(msg)
-            return
-        self._ime_counter += 1
-        self._field_counter += 1
-        cursor = len(text)
-        # 1. IME state for the focused app + field (current text and cursor).
-        msg = RemoteMessage()
-        inject = msg.remote_ime_key_inject
-        inject.app_info.counter = self._ime_counter
-        inject.app_info.app_package = app
-        field = inject.text_field_status
-        field.counter_field = self._field_counter
-        field.value = text
-        field.start = field.end = cursor
-        self.send(msg)
-        # 2. Edit counters the phone must echo in its remote_ime_batch_edit.
-        msg = RemoteMessage()
-        batch = msg.remote_ime_batch_edit
-        batch.ime_counter = self._ime_counter
-        batch.field_counter = self._field_counter
-        edit = batch.edit_info.add()
-        edit.insert = 1
-        edit.text_field_status.value = text
-        edit.text_field_status.start = edit.text_field_status.end = cursor
-        self.send(msg)
-        # 3. Ask the phone to show its keyboard.
-        msg = RemoteMessage()
-        status = msg.remote_ime_show_request.remote_text_field_status
-        status.counter_field = self._field_counter
-        status.value = text
-        status.start = status.end = cursor
-        self.send(msg)
-        LOG.info("Asked %s to show its keyboard (field text %r)", self.peer_ip, text)
+        for frame in self.server.ime_start_frames():
+            self.send_raw(frame)
+        if self.server.ime_field_id:
+            LOG.info("Told %s a text field is focused (text %r)", self.peer_ip, self.server.ime_text)
 
 def host_ip() -> str:
     """LAN IP to advertise. Override with ATVB_HOST_IP if detection is wrong."""

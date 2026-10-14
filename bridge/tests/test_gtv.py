@@ -17,7 +17,7 @@ from typing import Any
 
 from androidtvremote2 import AndroidTVRemote, InvalidAuth
 
-from atvbridge import gtv
+from atvbridge import gtv, ime
 from atvbridge.store import Store
 
 
@@ -30,6 +30,7 @@ class FakeAppleTV:
             "app": {"name": "YouTube", "id": "com.google.ios.youtube"},
         }
         self.commands: list[tuple[str, dict[str, Any]]] = []
+        self.keyboard_focused = False
         self._listeners: list = []
         self._keyboard_listeners: list = []
         self.got_command = asyncio.Event()
@@ -145,8 +146,6 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.atv.next_command(), ("volume_down", {}))
         self.remote.send_key_command("MUTE")
         self.assertEqual(await self.atv.next_command(), ("mute", {}))
-        self.remote.send_text("hello")
-        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "hello"}))
         self.remote.send_launch_app_command("https://www.youtube.com")
         self.assertEqual(await self.atv.next_command(), ("launch", {"app": "https://www.youtube.com"}))
 
@@ -283,18 +282,43 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         await wait_for(lambda: heard)
         self.assertEqual(heard[0], (audio, 16000))
 
-    async def test_keyboard_focus_prompts_phone_and_typing_sets_text(self) -> None:
+    def edit_frame(self, field_id: int, counter: int, *edits: bytes) -> bytes:
+        """A BatchEdit as Google's app sends it (see atvbridge/ime.py)."""
+        body = ime._int(1, field_id) + ime._int(2, counter) + b"".join(ime._bytes(3, e) for e in edits)
+        return ime._bytes(ime.BATCH_EDIT, body)
+
+    async def test_keyboard_focus_announces_text_field(self) -> None:
         await self.connected_remote()
-        proto = self.remote._remote_message_protocol
         self.atv.keyboard(True, "stra")
-        # The phone learns the edit counters and the field's current text from the TV.
-        await wait_for(lambda: proto.ime_counter == 1 and proto.ime_field_counter == 1)
-        self.remote.send_text("stranger things")
-        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger things"}))
-        # Next focus gets fresh counters.
+        # Our StartInput decodes with androidtvremote2's proto too: its "app_info" is EditorInfo.
+        start, show = self.server.ime_start_frames()
+        msg = gtv.RemoteMessage.FromString(start)
+        self.assertEqual(msg.remote_ime_key_inject.app_info.int2, ime.TYPE_CLASS_TEXT)  # inputType
+        self.assertEqual(msg.remote_ime_key_inject.app_info.app_package, "com.google.ios.youtube")
+        self.assertEqual(msg.remote_ime_key_inject.text_field_status.value, "stra")
+        self.assertEqual(ime.read_fields(show), [(ime.SHOW_HIDE, ime._int(1, 1))])
         self.atv.keyboard(False)
-        self.atv.keyboard(True, "")
-        await wait_for(lambda: proto.ime_counter == 2)
+        self.assertEqual(ime.read_fields(self.server.ime_start_frames()[1]), [(ime.SHOW_HIDE, ime._int(1, 0))])
+
+    async def test_phone_typing_edits_apple_tv_text(self) -> None:
+        from atvbridge.tls import ProtobufFraming
+
+        await self.connected_remote()
+        session = next(iter(self.server.sessions))
+        self.atv.keyboard(True, "stra")
+        fid, counter = self.server.ime_field_id, self.server.ime_text_counter
+        replace = lambda a, b, t: ime._bytes(2, ime._int(1, a) + ime._int(2, b) + ime._str(3, t))  # noqa: E731
+        select = lambda a, b: ime._bytes(1, ime._int(2, a) + ime._int(3, b))  # noqa: E731
+        session.on_data(ProtobufFraming.encode(self.edit_frame(fid, counter, replace(4, 4, "nger things"))))
+        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger things"}))
+        # Backspace twice, as a selection + replace with "".
+        session.on_data(ProtobufFraming.encode(self.edit_frame(
+            fid, self.server.ime_text_counter, select(13, 15), replace(13, 15, ""))))
+        self.assertEqual(await self.atv.next_command(), ("text_set", {"text": "stranger thin"}))
+        # Edits for a field that is no longer focused are ignored.
+        session.on_data(ProtobufFraming.encode(self.edit_frame(fid + 7, 0, replace(0, 0, "x"))))
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.server.ime_text, "stranger thin")
 
     async def test_options_offer_output_encoding(self) -> None:
         # Google's remote app (Polo) needs our *output* encodings to match its input
