@@ -41,6 +41,10 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self._keyboard_listeners: list[Callable[[bool], None]] = []
         self._task: asyncio.Task | None = None
         self._lost = asyncio.Event()
+        self.keyboard_focused = False
+        self._focus_changed = asyncio.Event()
+        self._apps: dict[str, str] = {}
+        self._apps_at = 0.0
 
     # --- lifecycle -------------------------------------------------------------------
     def start(self) -> None:
@@ -104,6 +108,10 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             self.atv.keyboard.listener = self
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self.keyboard_focused = self.atv.keyboard.text_focus_state == KeyboardFocusState.Focused
+        except Exception:  # noqa: BLE001
+            self.keyboard_focused = False
         LOG.info("Connected to Apple TV %s (%s)", conf.name, conf.address)
         self._set(connected=True, error=None, name=conf.name, power=self._power_str(),
                   volume_control=self._volume_control(), volume=None)
@@ -150,6 +158,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
 
     def focusstate_update(self, old_state: KeyboardFocusState, new_state: KeyboardFocusState) -> None:
         focused = new_state == KeyboardFocusState.Focused
+        self.keyboard_focused = focused
+        self._focus_changed.set()
         for cb in list(self._keyboard_listeners):
             cb(focused)
 
@@ -222,6 +232,28 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
             self._set(now_playing=now_playing if active else None, app=app, power=self._power_str())
         except Exception as exc:  # noqa: BLE001
             LOG.debug("Failed to refresh now playing: %s", exc)
+
+    async def app_names(self) -> dict[str, str]:
+        """Installed apps as {display name: bundle id}, cached for 10 minutes."""
+        if not self.atv:
+            raise ConnectionError("Apple TV not connected")
+        if not self._apps or time.monotonic() - self._apps_at > 600:
+            self._apps = {a.name: a.identifier for a in await self.atv.apps.app_list() if a.name}
+            self._apps_at = time.monotonic()
+        return self._apps
+
+    async def wait_keyboard_focus(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not self.keyboard_focused:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            self._focus_changed.clear()
+            try:
+                await asyncio.wait_for(self._focus_changed.wait(), remaining)
+            except asyncio.TimeoutError:
+                return False
+        return True
 
     async def _mrp_hid(self, usage_page: int, usage: int) -> None:
         """Press a HID key over MRP. pyatv only exposes a fixed set of keys (no mute), so this

@@ -79,6 +79,11 @@ HOLD_DELAY = 0.5        # seconds before a press counts as held
 REPEAT_INTERVAL = 0.15  # arrow auto-repeat rate while held
 MAX_HOLD = 10.0         # stop repeating if the release never arrives
 
+# Voice audio is 16-bit mono PCM. Google's app sends field 31 as raw bytes at 16 kHz;
+# androidtvremote2 sends a RemoteVoicePayload message at 8 kHz.
+VOICE_PAYLOAD_TAG = bytes([0xFA, 0x01])  # field 31, wire type 2
+VOICE_RATE_RAW = 16000
+VOICE_RATE_STRUCTURED = 8000
 # The Google TV voice assistant; reported in remote_voice_begin like a real TV.
 VOICE_PACKAGE = "com.google.android.katniss"
 VOICE_MAX_SECONDS = 20.0  # end a voice session if the phone never sends remote_voice_end
@@ -124,8 +129,8 @@ class GoogleTVServer:
         self._zc: AsyncZeroconf | None = None
         self._services: list[ServiceInfo] = []
         self.on_change: Callable[[], None] = lambda: None
-        # Called with the PCM audio of each finished voice session.
-        self.on_voice: Callable[[bytes, str], None] = self._save_voice
+        # Called with (pcm, sample_rate, phone ip) for each finished voice session.
+        self.on_voice: Callable[[bytes, int, str], None] = self._save_voice
         appletv.on_change(self._on_appletv_change)
         appletv.on_keyboard(self._on_keyboard)
 
@@ -200,8 +205,8 @@ class GoogleTVServer:
                 await self._zc.async_unregister_service(info)
             await self._zc.async_close()
 
-    def _save_voice(self, pcm: bytes, phone: str) -> None:
-        voice.save_wav(pcm, self.store.data_dir / "voice" / "last.wav")
+    def _save_voice(self, pcm: bytes, rate: int, phone: str) -> None:
+        voice.save_wav(pcm, rate, self.store.data_dir / "voice" / "last.wav")
 
     # --- Apple TV -> phones ---------------------------------------------------------
     def _on_appletv_change(self, state: dict[str, Any]) -> None:
@@ -344,6 +349,7 @@ class RemoteSession(TLSConnection):
         self._press: _Press | None = None
         self._voice_id: int | None = None
         self._voice_pcm = bytearray()
+        self._voice_rate = VOICE_RATE_STRUCTURED
         self._voice_timeout: asyncio.TimerHandle | None = None
 
     def select_context(self):  # noqa: ANN201
@@ -408,10 +414,13 @@ class RemoteSession(TLSConnection):
     def on_data(self, data: bytes) -> None:
         self._last_rx = time.monotonic()
         for raw in self.framing.feed(data):
+            if self._voice_id is not None and raw.startswith(VOICE_PAYLOAD_TAG) and self._raw_voice(raw):
+                continue
             msg = RemoteMessage()
             try:
                 msg.ParseFromString(raw)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug("Unparseable %d-byte message from %s (%s): %s", len(raw), self.peer_ip, exc, raw[:64].hex())
                 continue
             self.handle(msg)
 
@@ -443,8 +452,13 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_voice_begin"):
             pass  # the phone echoing our session id: it starts streaming next
         elif msg.HasField("remote_voice_payload"):
-            if msg.remote_voice_payload.session_id == self._voice_id:
-                self._voice_pcm += msg.remote_voice_payload.samples
+            payload = msg.remote_voice_payload
+            if payload.session_id == self._voice_id:
+                self._voice_pcm += payload.samples
+                self._voice_rate = VOICE_RATE_STRUCTURED
+            else:
+                LOG.debug("Voice payload for session %s (current %s), %d bytes",
+                          payload.session_id, self._voice_id, len(payload.samples))
         elif msg.HasField("remote_voice_end"):
             if msg.remote_voice_end.session_id == self._voice_id:
                 self._end_voice()
@@ -508,6 +522,30 @@ class RemoteSession(TLSConnection):
             self._press = None
 
     # --- voice ------------------------------------------------------------------------
+    def _raw_voice(self, raw: bytes) -> bool:
+        """Take audio from a field-31 frame that holds raw PCM rather than the
+        RemoteVoicePayload message our proto declares (Google's app does this)."""
+        length, pos, shift = 0, len(VOICE_PAYLOAD_TAG), 0
+        while pos < len(raw):
+            b = raw[pos]
+            length |= (b & 0x7F) << shift
+            pos += 1
+            if not b & 0x80:
+                break
+            shift += 7
+        if pos + length != len(raw):
+            return False
+        body = raw[pos:]
+        try:
+            structured = RemoteMessage.FromString(raw).remote_voice_payload
+            if structured.session_id == self._voice_id and structured.samples:
+                return False  # a real RemoteVoicePayload: let handle() take it
+        except Exception:  # noqa: BLE001
+            pass
+        self._voice_pcm += body
+        self._voice_rate = VOICE_RATE_RAW
+        return True
+
     def _start_voice(self) -> None:
         if self._voice_id is not None:
             self._end_voice()  # mic pressed again: finish the current utterance
@@ -529,15 +567,17 @@ class RemoteSession(TLSConnection):
             self._voice_timeout.cancel()
             self._voice_timeout = None
         pcm = voice.trim_padding(bytes(self._voice_pcm))
+        rate = self._voice_rate
         self._voice_pcm = bytearray()
+        self._voice_rate = VOICE_RATE_STRUCTURED
         msg = RemoteMessage()
         msg.remote_voice_end.session_id = session_id
         self.send(msg)
-        duration, rms = voice.stats(pcm)
-        LOG.info("Voice session %s ended: %.1f s of audio, level %.3f", session_id, duration, rms)
+        duration, rms = voice.stats(pcm, rate)
+        LOG.info("Voice session %s ended: %.1f s of audio at %d Hz, level %.3f", session_id, duration, rate, rms)
         if pcm:
             try:
-                self.server.on_voice(pcm, self.peer_ip)
+                self.server.on_voice(pcm, rate, self.peer_ip)
             except Exception:  # noqa: BLE001
                 LOG.exception("Voice handler failed")
 

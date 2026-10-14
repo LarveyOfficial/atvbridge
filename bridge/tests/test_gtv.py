@@ -244,8 +244,8 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         import array
         import math
 
-        heard: list[bytes] = []
-        self.server.on_voice = lambda pcm, phone: heard.append(pcm)  # type: ignore[assignment]
+        heard: list[tuple[bytes, int]] = []
+        self.server.on_voice = lambda pcm, rate, phone: heard.append((pcm, rate))  # type: ignore[assignment]
         self.remote = AndroidTVRemote(
             "Pixel Test", self.remote._certfile, self.remote._keyfile, "127.0.0.1",
             api_port=gtv.REMOTE_PORT, pair_port=gtv.PAIRING_PORT, enable_voice=True,
@@ -256,8 +256,28 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         async with await self.remote.start_voice() as stream:
             stream.send_chunk(tone.tobytes())
         await wait_for(lambda: heard)
-        # Zero padding from the phone's 8 KB chunks is trimmed off.
-        self.assertEqual(heard[0], tone.tobytes().rstrip(b"\x00"))
+        # Zero padding from the client's 8 KB chunks is trimmed off.
+        self.assertEqual(heard[0], (tone.tobytes().rstrip(b"\x00"), 8000))
+
+    async def test_voice_raw_pcm_frames_from_google_app(self) -> None:
+        # Google's app sends field 31 as raw 16 kHz PCM bytes, not a RemoteVoicePayload.
+        from atvbridge.tls import ProtobufFraming
+
+        heard: list[tuple[bytes, int]] = []
+        self.server.on_voice = lambda pcm, rate, phone: heard.append((pcm, rate))  # type: ignore[assignment]
+        await self.connected_remote()
+        session = next(iter(self.server.sessions))
+        self.remote.send_key_command("SEARCH")
+        await wait_for(lambda: session._voice_id is not None)
+        audio = bytes(range(1, 201)) * 3
+        for i in range(0, len(audio), 200):
+            chunk = audio[i:i + 200]
+            session.on_data(ProtobufFraming.encode(gtv.VOICE_PAYLOAD_TAG + bytes([0xC8, 0x01]) + chunk))
+        end = gtv.RemoteMessage()
+        end.remote_voice_end.session_id = session._voice_id
+        session.on_data(ProtobufFraming.encode(end.SerializeToString()))
+        await wait_for(lambda: heard)
+        self.assertEqual(heard[0], (audio, 16000))
 
     async def test_options_offer_output_encoding(self) -> None:
         # Google's remote app (Polo) needs our *output* encodings to match its input

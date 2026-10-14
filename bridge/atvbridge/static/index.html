@@ -177,6 +177,7 @@
           <button data-cmd="power_toggle" title="Power">Power</button>
         </div>
         <div class="small muted">Keyboard: arrows, Enter, Esc, H, Space</div>
+        <div class="small hidden" id="voice" style="text-align:center"></div>
       </div>
     </section>
 
@@ -324,6 +325,11 @@ function render() {
   }
 
   renderNowPlaying();
+
+  // Last voice command from a phone's mic button
+  const v = s.voice;
+  $("#voice").classList.toggle("hidden", !v);
+  if (v) $("#voice").textContent = `🎤 “${v.text || "…"}” → ${v.action} (${ago(v.at)})`;
 
   // Volume
   if (!volumeDragging) {

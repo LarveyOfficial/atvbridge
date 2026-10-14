@@ -10,6 +10,7 @@ import signal
 from .appletv import AppleTV
 from .gtv import GoogleTVServer
 from .store import Store
+from .voice import VoiceAssistant
 from .web import Web
 
 
@@ -22,8 +23,13 @@ async def main() -> None:
     appletv = AppleTV(store)
     gtv = GoogleTVServer(store, appletv)
     web = Web(store, appletv, gtv)
+    voice = VoiceAssistant(appletv, store.data_dir)
+    gtv.on_voice = voice.handle
+    voice.on_result = web.broadcast
+    web.voice = voice
 
     appletv.start()
+    voice.preload()
     await gtv.start()
     await web.start(int(os.environ.get("ATVB_WEB_PORT", 8090)))
 

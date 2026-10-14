@@ -37,6 +37,7 @@ class Web:
         self.pairing: atvmod.PairingSession | None = None
         self.pending_creds: dict[str, Any] = {}
         self._runner: web.AppRunner | None = None
+        self.voice: Any = None  # VoiceAssistant, set by __main__
         self.app = web.Application()
         r = self.app.router
         r.add_get("/", self.index)
@@ -88,6 +89,7 @@ class Web:
                 for fp, p in self.store.phones.items()
             ],
             "remotes_connected": len(self.gtv.sessions),
+            "voice": self.voice.last if self.voice else None,
             # Lets clients interpolate now_playing.position without trusting their own clock.
             "server_time": time.time(),
         }
