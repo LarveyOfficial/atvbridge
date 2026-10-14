@@ -219,6 +219,23 @@ class GoogleTVServerTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(gtv.HOLD_DELAY + 0.2)
         self.assertEqual(self.atv.commands, [("left", {})])
 
+    async def test_relative_volume(self) -> None:
+        # Apple TV driving the TV over HDMI-CEC: only up/down, no level.
+        self.atv.state.update(volume=None, volume_control="relative")
+        await self.connected_remote()
+        await wait_for(lambda: self.remote.volume_info is not None)
+        self.assertEqual(self.remote.volume_info["level"], gtv.RELATIVE_VOLUME_PLACEHOLDER)
+
+        self.remote.send_key_command("VOLUME_UP")
+        self.assertEqual(await self.atv.next_command(), ("volume_up", {}))
+
+        # A slider drag (set level) becomes steps relative to the placeholder.
+        session = next(iter(self.server.sessions))
+        self.atv.commands.clear()
+        session._set_volume(gtv.RELATIVE_VOLUME_PLACEHOLDER - 2)
+        await wait_for(lambda: len(self.atv.commands) == 2)
+        self.assertEqual(self.atv.commands, [("volume_down", {})] * 2)
+
     async def test_options_offer_output_encoding(self) -> None:
         # Google's remote app (Polo) needs our *output* encodings to match its input
         # encodings, or it aborts with STATUS_BAD_CONFIGURATION (401).

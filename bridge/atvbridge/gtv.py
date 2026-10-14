@@ -76,6 +76,10 @@ HOLD_DELAY = 0.5        # seconds before a press counts as held
 REPEAT_INTERVAL = 0.15  # arrow auto-repeat rate while held
 MAX_HOLD = 10.0         # stop repeating if the release never arrives
 
+# Level reported to phones when the Apple TV can only step volume up/down.
+RELATIVE_VOLUME_PLACEHOLDER = 50
+MAX_VOLUME_STEPS = 5
+
 
 class _Press:
     def __init__(self, cmd: str, timer: asyncio.TimerHandle) -> None:
@@ -413,7 +417,7 @@ class RemoteSession(TLSConnection):
         elif msg.HasField("remote_adjust_volume_level"):
             pass  # carries no direction; volume keys arrive as KEYCODE_VOLUME_* instead
         elif msg.HasField("remote_set_volume_level"):
-            self._run("set_volume", level=msg.remote_set_volume_level.volume_level)
+            self._set_volume(msg.remote_set_volume_level.volume_level)
         elif msg.HasField("remote_app_link_launch_request"):
             self._run("launch", app=msg.remote_app_link_launch_request.app_link)
         elif msg.HasField("remote_ime_batch_edit"):
@@ -490,18 +494,39 @@ class RemoteSession(TLSConnection):
         msg = RemoteMessage()
         msg.remote_ime_key_inject.app_info.app_package = app
         self.send(msg)
-        vol = st.get("volume")
-        if vol is not None:
-            msg = RemoteMessage()
-            v = msg.remote_set_volume_level
-            v.player_model = self.server.store.display_name()
-            v.volume_max = 100
-            v.volume_level = int(vol)
-            v.volume_muted = False
-            self.send(msg)
+        self._push_volume()
         msg = RemoteMessage()
         msg.remote_start.started = st.get("power") != "off"
         self.send(msg)
+
+    def _push_volume(self) -> None:
+        """Report volume like a real Google TV does on connect; phones may rely on it to
+        route their volume buttons to the TV. Relative-only Apple TVs get a placeholder."""
+        st = self.server.appletv.state
+        vol = st.get("volume")
+        if vol is None and st.get("volume_control") == "relative":
+            vol = RELATIVE_VOLUME_PLACEHOLDER
+        if vol is None:
+            return
+        msg = RemoteMessage()
+        v = msg.remote_set_volume_level
+        v.player_model = self.server.store.display_name()
+        v.volume_max = 100
+        v.volume_level = int(vol)
+        v.volume_muted = False
+        self.send(msg)
+
+    def _set_volume(self, level: int) -> None:
+        st = self.server.appletv.state
+        if st.get("volume_control") != "relative":
+            self._run("set_volume", level=level)
+            return
+        # Phone dragged a volume slider, but the Apple TV can only step: turn the change
+        # relative to the placeholder into up/down presses, then re-centre the slider.
+        steps = max(-MAX_VOLUME_STEPS, min(MAX_VOLUME_STEPS, level - RELATIVE_VOLUME_PLACEHOLDER))
+        for _ in range(abs(steps)):
+            self._run("volume_up" if steps > 0 else "volume_down")
+        self._push_volume()
 
     def push_keyboard(self, focused: bool) -> None:
         if not self.active or not focused:
