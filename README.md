@@ -96,9 +96,10 @@ mic keeps working either way. Without the Siri container, simply leave `ATVB_SIR
 ### b3. Optional: real volume from an LG TV
 
 The Apple TV changes the TV's volume with HDMI-CEC/IR presses and can't read the level, so by
-default the phone gets volume up/down only. An LG webOS TV reports the real level (also when it
-drives a soundbar over HDMI ARC) and pushes changes live, so with it the phone gets a real slider
-that follows the LG remote too. Add `-e ATVB_LG_HOST=<tv-ip>` and accept the prompt on the TV the
+default the phone gets volume up/down only. An LG webOS TV reports the real level of its own
+speakers and pushes changes live, so with it the phone gets a real slider that follows the LG remote
+too. **Not with a soundbar on HDMI ARC:** the TV then reports a stale number of its own
+(`volumeSyncable: false`) that doesn't follow the soundbar, so leave this off. Add `-e ATVB_LG_HOST=<tv-ip>` and accept the prompt on the TV the
 first time (or copy `data/lg.json` from an earlier setup).
 
 ### c. Check it
