@@ -13,7 +13,7 @@ class BridgeStateTest {
     private val playing = """
         {"type": "state", "name": "Chomusuke", "server_time": 1000.5,
          "appletv": {"connected": true, "error": null, "name": "Chomusuke", "power": "on",
-                     "volume": 50.0, "app": {"name": "YouTube", "id": "com.google.ios.youtube"},
+                     "volume": 50.0, "volume_control": "absolute", "app": {"name": "YouTube", "id": "com.google.ios.youtube"},
                      "now_playing": {"title": "Video", "artist": "Channel", "album": "", "series": null,
                                      "state": "playing", "position": 105, "total": 625,
                                      "media_type": "unknown", "updated_at": 998.5, "artwork_id": null}},
@@ -29,6 +29,7 @@ class BridgeStateTest {
         assertNull(st.error)
         assertEquals("YouTube", st.appName)
         assertEquals(50, st.volume)
+        assertEquals("absolute", st.volumeControl)
         assertEquals(42L, st.positionTime)
         val np = st.nowPlaying!!
         assertEquals("Video", np.title)
@@ -66,6 +67,7 @@ class BridgeStateTest {
         assertEquals("Not configured", st.error)
         assertNull(st.nowPlaying)
         assertNull(st.volume)
+        assertNull(st.volumeControl)
         assertNull(st.appName)
     }
 }

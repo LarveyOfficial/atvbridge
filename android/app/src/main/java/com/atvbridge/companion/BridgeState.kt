@@ -21,6 +21,8 @@ data class BridgeState(
     val error: String?,
     val appName: String?,
     val volume: Int?,
+    /** "absolute" (level can be set), "relative" (up/down steps only) or null. */
+    val volumeControl: String?,
     val nowPlaying: NowPlaying?,
     /** SystemClock.elapsedRealtime() at which nowPlaying.positionMs was current. */
     val positionTime: Long,
@@ -54,6 +56,7 @@ data class BridgeState(
                 error = atv.str("error"),
                 appName = atv.optJSONObject("app")?.str("name"),
                 volume = atv.num("volume")?.toInt(),
+                volumeControl = atv.str("volume_control"),
                 nowPlaying = np,
                 positionTime = receivedAt,
             )

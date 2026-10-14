@@ -191,10 +191,12 @@ class Web:
         body.pop("type", None)
         if cmd not in MEDIA_COMMANDS:
             return {"error": f"Unsupported command {cmd}"}
+        LOG.debug("Web command %s %s", cmd, body or "")
         try:
             await self.appletv.command(cmd, **body)
             return {"ok": True}
         except Exception as exc:  # noqa: BLE001
+            LOG.warning("Command %s failed: %s", cmd, exc)
             return {"error": str(exc)}
 
     async def artwork(self, request: web.Request) -> web.Response:

@@ -8,7 +8,9 @@ import time
 from typing import Any, Callable
 
 import pyatv
-from pyatv.const import DeviceState, InputAction, KeyboardFocusState, PowerState, Protocol
+from pyatv.const import (
+    DeviceState, FeatureName, FeatureState, InputAction, KeyboardFocusState, PowerState, Protocol,
+)
 from pyatv.interface import (
     AudioListener,
     DeviceListener,
@@ -102,7 +104,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         except Exception:  # noqa: BLE001
             pass
         LOG.info("Connected to Apple TV %s (%s)", conf.name, conf.address)
-        self._set(connected=True, error=None, name=conf.name, power=self._power_str())
+        self._set(connected=True, error=None, name=conf.name, power=self._power_str(),
+                  volume_control=self._volume_control(), volume=None)
         await self._refresh_now_playing()
 
     def _close(self) -> set[asyncio.Task]:
@@ -135,7 +138,8 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
         self._set(power=self._power_str())
 
     def volume_update(self, old_level: float, new_level: float) -> None:
-        self._set(volume=new_level)
+        if self.state.get("volume_control") == "absolute":
+            self._set(volume=new_level)
 
     def volume_device_update(self, output_device, old_level: float, new_level: float) -> None:  # noqa: ANN001
         pass
@@ -162,6 +166,17 @@ class AppleTV(DeviceListener, PushListener, PowerListener, AudioListener, Keyboa
                 cb(self.state)
             except Exception:  # noqa: BLE001
                 LOG.exception("state listener failed")
+
+    def _volume_control(self) -> str | None:
+        """"absolute" if the level can be read and set, "relative" for up/down steps only
+        (typical: Apple TV driving the TV over HDMI-CEC/IR), None if not controllable."""
+        assert self.atv is not None
+        features = self.atv.features
+        if all(features.in_state(FeatureState.Available, f) for f in (FeatureName.Volume, FeatureName.SetVolume)):
+            return "absolute"
+        if features.in_state(FeatureState.Available, FeatureName.VolumeUp):
+            return "relative"
+        return None
 
     def _power_str(self) -> str:
         try:

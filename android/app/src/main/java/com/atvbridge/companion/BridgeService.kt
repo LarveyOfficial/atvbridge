@@ -203,8 +203,15 @@ class BridgeService : Service(), BridgeClient.Listener {
     }
 
     private fun updateVolume(st: BridgeState) {
-        val volume = st.volume
-        if (!prefs.volumeKeys || volume == null) {
+        // Apple TVs driving the TV over HDMI-CEC/IR can only step up/down (no level),
+        // so that case gets a relative provider; the shown level is a placeholder.
+        val mode = when {
+            !prefs.volumeKeys -> null
+            st.volumeControl == "absolute" && st.volume != null -> VolumeProvider.VOLUME_CONTROL_ABSOLUTE
+            st.volumeControl == "relative" || st.volumeControl == "absolute" -> VolumeProvider.VOLUME_CONTROL_RELATIVE
+            else -> null
+        }
+        if (mode == null) {
             if (volumeProvider != null) {
                 volumeProvider = null
                 session.setPlaybackToLocal(
@@ -213,23 +220,26 @@ class BridgeService : Service(), BridgeClient.Listener {
             }
             return
         }
-        val provider = volumeProvider ?: object : VolumeProvider(VOLUME_CONTROL_ABSOLUTE, 100, volume) {
-            override fun onSetVolumeTo(volume: Int) {
-                currentVolume = volume.coerceIn(0, 100)
-                command("set_volume", "level" to currentVolume)
-            }
-
-            override fun onAdjustVolume(direction: Int) {
-                when (direction) {
-                    1 -> command("volume_up")
-                    -1 -> command("volume_down")
+        val provider = volumeProvider?.takeIf { it.volumeControl == mode }
+            ?: object : VolumeProvider(mode, 100, st.volume ?: 50) {
+                override fun onSetVolumeTo(volume: Int) {
+                    currentVolume = volume.coerceIn(0, 100)
+                    command("set_volume", "level" to currentVolume)
                 }
+
+                override fun onAdjustVolume(direction: Int) {
+                    when (direction) {
+                        1 -> command("volume_up")
+                        -1 -> command("volume_down")
+                    }
+                }
+            }.also {
+                volumeProvider = it
+                session.setPlaybackToRemote(it)
             }
-        }.also {
-            volumeProvider = it
-            session.setPlaybackToRemote(it)
+        if (mode == VolumeProvider.VOLUME_CONTROL_ABSOLUTE && st.volume != null && provider.currentVolume != st.volume) {
+            provider.currentVolume = st.volume
         }
-        if (provider.currentVolume != volume) provider.currentVolume = volume
     }
 
     // --- media session -> bridge ----------------------------------------------------------
