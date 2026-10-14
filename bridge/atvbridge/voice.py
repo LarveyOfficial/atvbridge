@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 LOG = logging.getLogger(__name__)
 
 SEARCH_APP = "com.apple.TVSearch"
-WHISPER_MODEL = os.environ.get("ATVB_WHISPER_MODEL", "base.en")
+WHISPER_MODEL = os.environ.get("ATVB_WHISPER_MODEL") or "base.en"
 WHISPER_RATE = 16000
 
 

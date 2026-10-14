@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<!--
+  Unraid Docker template for ATV Bridge.
+  Install: save as /boot/config/plugins/dockerMan/templates-user/my-atvbridge.xml, then
+  Docker tab -> Add Container -> Template: atvbridge -> Apply.
+-->
+<Container version="2">
+  <Name>atvbridge</Name>
+  <Repository>ghcr.io/larveyofficial/atvbridge:latest</Repository>
+  <Registry>https://github.com/LarveyOfficial/atvbridge/pkgs/container/atvbridge</Registry>
+  <Network>host</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/LarveyOfficial/atvbridge/issues</Support>
+  <Project>https://github.com/LarveyOfficial/atvbridge</Project>
+  <Overview>Control an Apple TV from Android's built-in Google TV remote (Quick Settings tile / Google Home app): D-pad, keyboard, volume, mute and voice. The dashboard (WebUI) shows what's playing, pairs devices and hands out the Android companion app for the lock-screen media card. Includes a Siri voice remote: pair it once in Apple's Home app (Add Accessory, More options, Voice Remote, code 031-45-154) and the remote's mic button talks to Siri. Host networking is required (phones and the Apple TV find it over mDNS).</Overview>
+  <Category>HomeAutomation: MediaApp:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/LarveyOfficial/atvbridge/main/unraid.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/LarveyOfficial/atvbridge/main/assets/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Host networking. An Apple TV on the same network.</Requires>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/atvbridge" Mode="rw" Description="Pairings (Apple TV, phones, Siri remote), settings and the speech model cache." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/atvbridge</Config>
+  <Config Name="Dashboard port" Target="ATVB_WEB_PORT" Default="8090" Mode="" Description="Port of the dashboard and the companion app's connection (host network)." Type="Variable" Display="always" Required="false" Mask="false">8090</Config>
+  <Config Name="Advertised IP" Target="ATVB_HOST_IP" Default="" Mode="" Description="Leave empty. Set to the server's LAN IP only if the logs show phones being told the wrong address (several interfaces or bridges)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Siri voice remote" Target="ATVB_SIRI" Default="auto" Mode="" Description="auto: run the bundled Siri voice remote (HomeKit). 0: turn it off." Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="Siri HomeKit setup code" Target="ATVB_SIRI_PINCODE" Default="031-45-154" Mode="" Description="Code to enter in the Home app when adding the Voice Remote." Type="Variable" Display="advanced" Required="false" Mask="false">031-45-154</Config>
+  <Config Name="Speech model" Target="ATVB_WHISPER_MODEL" Default="base.en" Mode="" Description="Local speech recognition used when Siri isn't available. small.en is more accurate but slower. Downloaded once (~140 MB)." Type="Variable" Display="advanced" Required="false" Mask="false">base.en</Config>
+  <Config Name="Online artwork" Target="ATVB_ONLINE_ARTWORK" Default="1" Mode="" Description="1: look up artwork for apps that publish none (YouTube thumbnails, App Store icons). 0: off." Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+  <Config Name="Log level" Target="ATVB_LOG_LEVEL" Default="INFO" Mode="" Description="INFO, or DEBUG to log key presses and protocol messages." Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>

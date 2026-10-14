@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-DATA_DIR = Path(os.environ.get("ATVB_DATA", Path.cwd() / "data")).resolve()
+DATA_DIR = Path(os.environ.get("ATVB_DATA") or Path.cwd() / "data").resolve()
 
 DEFAULTS: dict[str, Any] = {
     # {"address", "identifier", "name", "model", "mac", "credentials": {"companion", "airplay"}}

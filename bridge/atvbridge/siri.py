@@ -17,7 +17,7 @@ import aiohttp
 
 LOG = logging.getLogger(__name__)
 
-SIRI_URL = os.environ.get("ATVB_SIRI_URL", "").rstrip("/")
+SIRI_URL = (os.environ.get("ATVB_SIRI_URL") or "").rstrip("/")
 SIRI_RATE = 16000
 
 

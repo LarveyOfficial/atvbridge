@@ -18,7 +18,7 @@ import aiohttp
 
 LOG = logging.getLogger(__name__)
 
-ENABLED = os.environ.get("ATVB_ONLINE_ARTWORK", "1") not in ("0", "false", "no")
+ENABLED = (os.environ.get("ATVB_ONLINE_ARTWORK") or "1") not in ("0", "false", "no")
 YOUTUBE_APPS = {"com.google.ios.youtube", "com.google.ios.youtubeunplugged"}
 _HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)", "Accept-Language": "en-US,en"}
 _INITIAL_DATA = re.compile(r"var ytInitialData = (\{.*?\});</script>", re.S)

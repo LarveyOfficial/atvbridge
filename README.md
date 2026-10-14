@@ -36,7 +36,17 @@ over HomeKit/mDNS, and both connect straight to its ports (8090, 6466, 6467, 471
 
 ### a. Start the container
 
-Unraid web terminal (the `>_` icon top right):
+**Template (easiest):** save [`unraid.xml`](unraid.xml) as a user template, then add the container
+from it. In the Unraid web terminal (the `>_` icon top right):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/LarveyOfficial/atvbridge/main/unraid.xml \
+  -o /boot/config/plugins/dockerMan/templates-user/my-atvbridge.xml
+```
+
+Docker tab → **Add Container** → Template: **atvbridge** → check the settings → **Apply**.
+
+**Or by hand**, in the web terminal:
 
 ```sh
 docker run -d --name atvbridge \

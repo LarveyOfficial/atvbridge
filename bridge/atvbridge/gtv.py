@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
-PAIRING_PORT = int(os.environ.get("ATVB_PAIRING_PORT", 6467))
-REMOTE_PORT = int(os.environ.get("ATVB_REMOTE_PORT", 6466))
+PAIRING_PORT = int(os.environ.get("ATVB_PAIRING_PORT") or 6467)
+REMOTE_PORT = int(os.environ.get("ATVB_REMOTE_PORT") or 6466)
 
 # PING | KEY | IME | VOICE | POWER | VOLUME | APP_LINK (623, as a real Google TV announces).
 SERVER_FEATURES = 1 | 2 | 4 | 8 | 32 | 64 | 512
@@ -195,7 +195,7 @@ class GoogleTVServer:
             properties={"bt": mac},
             server=f"atvbridge-{mac.replace(':', '').lower()}.local.",
         ))
-        dash_port = int(os.environ.get("ATVB_WEB_PORT", 8090))
+        dash_port = int(os.environ.get("ATVB_WEB_PORT") or 8090)
         self._services.append(ServiceInfo(
             "_atvbridge._tcp.local.",
             f"{name}._atvbridge._tcp.local.",

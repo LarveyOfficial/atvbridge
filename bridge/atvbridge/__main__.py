@@ -19,7 +19,7 @@ from .web import Web
 
 async def main() -> None:
     logging.basicConfig(
-        level=os.environ.get("ATVB_LOG_LEVEL", "INFO").upper(),
+        level=(os.environ.get("ATVB_LOG_LEVEL") or "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     store = Store()
@@ -44,7 +44,7 @@ async def main() -> None:
     siri_host.start()
     voice.preload()
     await gtv.start()
-    await web.start(int(os.environ.get("ATVB_WEB_PORT", 8090)))
+    await web.start(int(os.environ.get("ATVB_WEB_PORT") or 8090))
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

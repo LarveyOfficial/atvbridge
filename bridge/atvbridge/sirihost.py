@@ -24,12 +24,12 @@ DEFAULT_PINCODE = "031-45-154"
 
 class SiriHost:
     def __init__(self, data_dir: Path, name: str) -> None:
-        self.dir = Path(os.environ.get("ATVB_SIRI_DIR", "/opt/siri"))
+        self.dir = Path(os.environ.get("ATVB_SIRI_DIR") or "/opt/siri")
         self.storage = data_dir / "siri"
         self.name = f"{name} Voice Remote"
-        self.pincode = os.environ.get("ATVB_SIRI_PINCODE", DEFAULT_PINCODE)
-        self.port = int(os.environ.get("ATVB_SIRI_PORT", 8477))
-        mode = os.environ.get("ATVB_SIRI", "auto").lower()
+        self.pincode = os.environ.get("ATVB_SIRI_PINCODE") or DEFAULT_PINCODE
+        self.port = int(os.environ.get("ATVB_SIRI_PORT") or 8477)
+        mode = (os.environ.get("ATVB_SIRI") or "auto").lower()
         bundled = (self.dir / "index.js").exists() and shutil.which("node") is not None
         self.enabled = bundled if mode == "auto" else mode in ("1", "true", "yes", "on") and bundled
         self.running = False
